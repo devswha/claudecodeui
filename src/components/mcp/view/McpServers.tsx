@@ -91,7 +91,7 @@ function TeamMcpFeatureCard() {
             rel="noopener noreferrer"
             className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-primary transition-colors hover:underline"
           >
-            Available with CloudCLI Pro
+            가재코드 Pro에서 제공
             <ExternalLink className="h-3 w-3" />
           </a>
         </div>
@@ -242,7 +242,7 @@ export default function McpServers({ selectedProvider, currentProjects }: McpSer
                     {managed && (
                       <div className="text-xs text-muted-foreground">
                         {t('mcpServers.managed.hint', {
-                          defaultValue: 'Managed by CloudCLI.',
+                          defaultValue: '가재코드가 관리합니다.',
                         })}
                       </div>
                     )}

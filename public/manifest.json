@@ -4,8 +4,8 @@
   "description": "가재코드 — 폰에서 쓰는 gjc 함대 지휘기",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0b0f0e",
-  "theme_color": "#14b8a6",
+  "background_color": "#1b0f0a",
+  "theme_color": "#f04e23",
   "orientation": "portrait-primary",
   "scope": "/",
   "icons": [

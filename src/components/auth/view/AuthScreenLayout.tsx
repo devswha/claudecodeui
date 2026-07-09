@@ -32,8 +32,8 @@ export default function AuthScreenLayout({
           <div className="text-center">
             <div className="mb-5 flex justify-center">
               {logo ?? (
-                <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-primary to-primary/80 shadow-lg shadow-primary/25 ring-1 ring-inset ring-white/20">
-                  <img src="/logo.svg" alt="가재코드" className="h-9 w-9" />
+                <div className="flex h-20 w-20 items-center justify-center">
+                  <img src="/logo.png" alt="가재코드" className="h-20 w-20 object-contain drop-shadow-lg" />
                 </div>
               )}
             </div>
@@ -58,7 +58,7 @@ export default function AuthScreenLayout({
                 rel="noopener noreferrer"
                 className="text-xs text-muted-foreground/50 transition-colors hover:text-muted-foreground"
               >
-                CloudCLI is open source
+                가재코드 · open source
               </a>
             </div>
           )}
