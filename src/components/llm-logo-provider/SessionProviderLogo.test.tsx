@@ -6,11 +6,11 @@ import { renderToStaticMarkup } from 'react-dom/server';
 
 import SessionProviderLogo from './SessionProviderLogo';
 
-test('gjc renders a distinct gjc badge, not the reused Claude logo', () => {
+test('gjc renders the distinct gajae mascot mark, not the reused Claude logo', () => {
   const gjc = renderToStaticMarkup(createElement(SessionProviderLogo, { provider: 'gjc' }));
   const claude = renderToStaticMarkup(createElement(SessionProviderLogo, { provider: 'claude' }));
 
-  assert.ok(gjc.includes('#14b8a6'), 'gjc mark uses its distinct teal colour');
+  assert.ok(gjc.includes('/logo.png'), 'gjc mark renders the mascot image');
   assert.ok(gjc.includes('gjc'), 'gjc mark carries the gjc label');
   assert.notEqual(gjc, claude, 'gjc must not render the same markup as Claude');
 });
