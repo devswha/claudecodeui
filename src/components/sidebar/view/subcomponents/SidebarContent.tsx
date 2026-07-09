@@ -13,6 +13,7 @@ import { getAllSessions } from '../../utils/utils';
 import SidebarFooter from './SidebarFooter';
 import SidebarHeader from './SidebarHeader';
 import SidebarProjectList, { type SidebarProjectListProps } from './SidebarProjectList';
+import SidebarLiveSection from './SidebarLiveSection';
 
 function HighlightedSnippet({ snippet, highlights }: { snippet: string; highlights: { start: number; end: number }[] }) {
   const parts: ReactNode[] = [];
@@ -549,7 +550,15 @@ export default function SidebarContent({
             </div>
           )
         ) : (
-          <SidebarProjectList {...projectListProps} />
+          <>
+            <SidebarLiveSection
+              projects={projects}
+              liveSessionIds={projectListProps.liveSessionIds}
+              selectedSession={projectListProps.selectedSession}
+              onSessionSelect={projectListProps.onSessionSelect}
+            />
+            <SidebarProjectList {...projectListProps} />
+          </>
         )}
       </ScrollArea>
 
