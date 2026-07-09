@@ -313,8 +313,18 @@ test('providerMcpService global adder writes to all providers and rejects unsupp
       workspacePath,
     });
 
-    assert.equal(globalResult.length, 4);
-    assert.ok(globalResult.every((entry) => entry.created === true));
+    // Registry now includes gjc, whose MCP provider is a deliberate read-only stub:
+    // it must show up in the results as a graceful per-provider failure, never as a write.
+    assert.equal(globalResult.length, 5);
+    const gjcEntry = globalResult.find((entry) => entry.provider === 'gjc');
+    assert.ok(gjcEntry);
+    assert.equal(gjcEntry.created, false);
+    assert.match(gjcEntry.error ?? '', /not supported/i);
+    assert.ok(
+      globalResult
+        .filter((entry) => entry.provider !== 'gjc')
+        .every((entry) => entry.created === true),
+    );
 
     const claudeProject = await readJson(path.join(workspacePath, '.mcp.json'));
     assert.ok((claudeProject.mcpServers as Record<string, unknown>)['global-http']);

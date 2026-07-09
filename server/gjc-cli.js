@@ -39,7 +39,8 @@ export function buildPromptArg(message, tmpDir = os.tmpdir()) {
   const promptText = String(message ?? '');
   if (promptText.startsWith('-')) {
     const tempFile = path.join(tmpDir, `gjc-prompt-${randomUUID()}.txt`);
-    writeFileSync(tempFile, promptText, 'utf8');
+    // 0600: prompts can carry sensitive text and os.tmpdir() is world-readable.
+    writeFileSync(tempFile, promptText, { encoding: 'utf8', mode: 0o600 });
     return { arg: `@${tempFile}`, tempFile };
   }
   return { arg: promptText, tempFile: null };
