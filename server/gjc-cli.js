@@ -426,6 +426,9 @@ async function spawnGjc(message, options = {}, writer) {
     if (model) {
       args.push('--model', model);
     }
+    // gjc -p reads the prompt as a positional arg (it does NOT read piped stdin in
+    // print mode). cross-spawn passes argv without a shell, so this is injection-safe.
+    args.push(String(message ?? ''));
 
     gjcProcess = spawnFunction('gjc', args, {
       cwd: workingDir,
@@ -437,11 +440,10 @@ async function spawnGjc(message, options = {}, writer) {
     activeGjcProcesses.set(processKey, gjcProcess);
     gjcProcess.sessionId = processKey;
 
-    // Deliver the prompt over stdin (injection-safe), then close the stream.
+    // Prompt is passed as an argv positional (gjc -p ignores piped stdin), so just
+    // close stdin right away so gjc doesn't block waiting on it.
     if (gjcProcess.stdin) {
-      // Swallow EPIPE if gjc exits before the prompt is fully written.
       gjcProcess.stdin.on('error', () => {});
-      gjcProcess.stdin.write(typeof message === 'string' ? message : String(message ?? ''));
       gjcProcess.stdin.end();
     }
 
