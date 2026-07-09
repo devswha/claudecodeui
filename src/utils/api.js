@@ -66,6 +66,8 @@ export const api = {
   // the DB-assigned `projectId`; parameter names reflect that for clarity.
   projects: () => authenticatedFetch('/api/projects'),
   archivedProjects: () => authenticatedFetch('/api/projects/archived'),
+  // Session ids currently live in a tmux gjc pane (tmux+lsof; [] when no tmux).
+  liveSessions: () => authenticatedFetch('/api/providers/sessions/live'),
   projectSessions: (projectId, { limit = 20, offset = 0 } = {}) => {
     const params = new URLSearchParams();
     params.set('limit', String(limit));

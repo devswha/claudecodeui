@@ -360,6 +360,7 @@ export function useProjectsState({
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [selectedSession, setSelectedSession] = useState<ProjectSession | null>(null);
   const [attentionSessionIds, setAttentionSessionIds] = useState<Set<string>>(new Set());
+  const [liveSessionIds, setLiveSessionIds] = useState<Set<string>>(new Set());
   const [activeTab, setActiveTab] = useState<AppTab>(readPersistedTab);
 
   useEffect(() => {
@@ -369,6 +370,29 @@ export function useProjectsState({
       // Silently ignore storage errors
     }
   }, [activeTab]);
+
+  // Poll which sessions are live in a tmux gjc pane (server tmux+lsof endpoint).
+  // Best-effort: on any error / no tmux the set is empty and the UI shows nothing live.
+  useEffect(() => {
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const response = await api.liveSessions();
+        if (!response.ok) return;
+        const body = await response.json();
+        const ids: string[] = body?.data?.liveSessionIds ?? body?.liveSessionIds ?? [];
+        if (!cancelled) setLiveSessionIds(new Set(ids));
+      } catch {
+        // ignore — live detection is best-effort
+      }
+    };
+    void poll();
+    const timer = setInterval(poll, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, []);
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isLoadingProjects, setIsLoadingProjects] = useState(true);
@@ -1023,6 +1047,7 @@ export function useProjectsState({
       selectedSession,
       activeSessions,
       attentionSessionIds,
+      liveSessionIds,
       onProjectSelect: handleProjectSelect,
       onSessionSelect: handleSessionSelect,
       onNewSession: handleNewSession,
@@ -1040,6 +1065,7 @@ export function useProjectsState({
     }),
     [
       attentionSessionIds,
+      liveSessionIds,
       handleNewSession,
       handleProjectDelete,
       handleProjectSelect,
