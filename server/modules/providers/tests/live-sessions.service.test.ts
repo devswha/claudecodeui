@@ -9,16 +9,16 @@ import {
 } from '@/modules/providers/services/live-sessions.service.js';
 
 test('tmuxHasPanes detects a running tmux server (>=1 pane line)', () => {
-  assert.equal(tmuxHasPanes('omg\t/home/u/workspace/oh-my-gjc\n'), true);
+  assert.equal(tmuxHasPanes('omg\t111\t/home/u/workspace/oh-my-gjc\n'), true);
   assert.equal(tmuxHasPanes('   \n\n'), false);
   assert.equal(tmuxHasPanes(''), false);
 });
 
-test('parseTmuxPanes splits session_name<TAB>cwd (cwd may contain spaces)', () => {
-  const out = parseTmuxPanes('omg\t/home/u/workspace/oh-my-gjc\nstock\t/home/u/workspace/magi stock\n\nbad-line\n');
+test('parseTmuxPanes splits session_name<TAB>pane_pid<TAB>cwd (cwd may contain spaces)', () => {
+  const out = parseTmuxPanes('omg\t111\t/home/u/workspace/oh-my-gjc\nstock\t222\t/home/u/workspace/magi stock\n\nbad-line\n');
   assert.deepEqual(out, [
-    { name: 'omg', cwd: '/home/u/workspace/oh-my-gjc' },
-    { name: 'stock', cwd: '/home/u/workspace/magi stock' },
+    { name: 'omg', pid: 111, cwd: '/home/u/workspace/oh-my-gjc' },
+    { name: 'stock', pid: 222, cwd: '/home/u/workspace/magi stock' },
   ]);
 });
 
@@ -37,18 +37,19 @@ test('parseLsofPidSessions pairs uuid with holder pid, path-agnostic (decoy-HOME
   ]);
 });
 
-test('computeLiveSessions maps each live session to its tmux name by cwd', () => {
+test('computeLiveSessions maps each live session to its tmux name by pid lineage', () => {
   const result = computeLiveSessions({
     tmuxPresent: true,
     panes: [
-      { name: 'patina', cwd: '/home/devswha/workspace/patina' },
-      { name: 'flask', cwd: '/home/devswha/workspace/flask' },
+      { name: 'patina', pid: 1000, cwd: '/home/devswha/workspace/patina' },
+      { name: 'flask', pid: 2000, cwd: '/home/devswha/workspace/flask' },
     ],
     sessions: [
-      { id: 'p1', cwd: '/home/devswha/workspace/patina' },
-      { id: 'f1', cwd: '/home/devswha/workspace/flask' },
-      { id: 'x1', cwd: '/home/devswha/Downloads' }, // no matching pane → null (title fallback)
-      { id: 'n1', cwd: null }, // unresolved cwd → null
+      // gjc holder is a descendant of the pane's shell pid (shell 1000 → … → gjc 1500)
+      { id: 'p1', pidChain: [1500, 1200, 1000], cwd: '/home/devswha/workspace/patina' },
+      { id: 'f1', pidChain: [2500, 2000], cwd: '/home/devswha/workspace/flask' },
+      { id: 'x1', pidChain: [9999], cwd: '/home/devswha/Downloads' }, // no pane pid, no cwd → null
+      { id: 'n1', pidChain: [], cwd: null },
     ],
   });
   assert.deepEqual(result.sort((a, b) => a.id.localeCompare(b.id)), [
@@ -59,9 +60,86 @@ test('computeLiveSessions maps each live session to its tmux name by cwd', () =>
   ]);
 });
 
+test('computeLiveSessions disambiguates two panes in the same cwd via pid lineage', () => {
+  // Two tmux sessions in the SAME cwd: cwd equality is many-to-many, which produced
+  // the prod bug. Process lineage resolves each gjc session to exactly its own pane,
+  // even when a gjc cwd has drifted away from the pane's current path.
+  const result = computeLiveSessions({
+    tmuxPresent: true,
+    panes: [
+      { name: 'patina', pid: 1000, cwd: '/home/devswha/workspace/patina' },
+      { name: 'omg', pid: 3000, cwd: '/home/devswha/workspace/patina' },
+    ],
+    sessions: [
+      { id: '019f469d', pidChain: [1800, 1000], cwd: '/home/devswha/workspace/patina/subdir' },
+      { id: '019f212c', pidChain: [3800, 3000], cwd: '/home/devswha/workspace/patina' },
+    ],
+  });
+  assert.deepEqual(result.sort((a, b) => a.id.localeCompare(b.id)), [
+    { id: '019f212c', tmuxName: 'omg' },
+    { id: '019f469d', tmuxName: 'patina' },
+  ]);
+});
+
+test('computeLiveSessions never double-labels a pane: cwd fallback skips a lineage-claimed pane (prod anomaly patina-dup)', () => {
+  // 019f469d is lineage-matched to the patina pane. 019f212c runs in the patina cwd
+  // but its shell is NOT the pane's process (nested/other shell) → no lineage hit.
+  // The old cwd fallback re-used the patina pane → "patina" on two rows. Now the
+  // claimed pane is off-limits, so the extra session goes null (title fallback).
+  const result = computeLiveSessions({
+    tmuxPresent: true,
+    panes: [{ name: 'patina', pid: 113501, cwd: '/home/devswha/workspace/patina' }],
+    sessions: [
+      { id: '019f469d', pidChain: [3304033, 113501], cwd: '/home/devswha/workspace/patina' },
+      { id: '019f212c', pidChain: [3901429, 3202543], cwd: '/home/devswha/workspace/patina' },
+    ],
+  });
+  assert.deepEqual(result.sort((a, b) => a.id.localeCompare(b.id)), [
+    { id: '019f212c', tmuxName: null },
+    { id: '019f469d', tmuxName: 'patina' },
+  ]);
+});
+
+test('computeLiveSessions falls back to cwd when the lineage misses and the pane is free+unique', () => {
+  const result = computeLiveSessions({
+    tmuxPresent: true,
+    panes: [{ name: 'omg', pid: 5000, cwd: '/home/devswha/workspace/oh-my-gjc' }],
+    // holder lineage carries no pane pid (e.g. reparented), but the cwd still matches
+    // a single unclaimed pane.
+    sessions: [{ id: 'o1', pidChain: [7777, 1], cwd: '/home/devswha/workspace/oh-my-gjc' }],
+  });
+  assert.deepEqual(result, [{ id: 'o1', tmuxName: 'omg' }]);
+});
+
+test('computeLiveSessions cwd fallback yields null when multiple unclaimed panes share the cwd', () => {
+  const result = computeLiveSessions({
+    tmuxPresent: true,
+    panes: [
+      { name: 'company', pid: 100, cwd: '/home/devswha/workspace' },
+      { name: 'test', pid: 200, cwd: '/home/devswha/workspace' },
+    ],
+    // no lineage hit and the cwd matches two panes → ambiguous → null
+    sessions: [{ id: 'a1', pidChain: [999], cwd: '/home/devswha/workspace' }],
+  });
+  assert.deepEqual(result, [{ id: 'a1', tmuxName: null }]);
+});
+
+test('computeLiveSessions merges holder rows by id (worker + main): either reaching the pane names it', () => {
+  // One session, two open-file holders (main reaches the pane, worker does not).
+  const result = computeLiveSessions({
+    tmuxPresent: true,
+    panes: [{ name: 'stock', pid: 61685, cwd: '/home/devswha/workspace/magi-stock' }],
+    sessions: [
+      { id: 's1', pidChain: [3435648, 61685], cwd: '/home/devswha/workspace/magi-stock' },
+      { id: 's1', pidChain: [3435700], cwd: null },
+    ],
+  });
+  assert.deepEqual(result, [{ id: 's1', tmuxName: 'stock' }]);
+});
+
 test('computeLiveSessions returns empty when no tmux (graceful degradation)', () => {
   assert.deepEqual(
-    computeLiveSessions({ tmuxPresent: false, panes: [], sessions: [{ id: 'a', cwd: '/x' }] }),
+    computeLiveSessions({ tmuxPresent: false, panes: [], sessions: [{ id: 'a', pidChain: [1], cwd: '/x' }] }),
     [],
   );
 });

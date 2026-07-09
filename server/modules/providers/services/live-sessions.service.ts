@@ -1,16 +1,17 @@
 import { spawn } from 'node:child_process';
-import { realpath } from 'node:fs/promises';
+import { readFile, realpath } from 'node:fs/promises';
 
 /**
  * Live gjc session detection + tmux-session naming.
  *
  * A gjc session is "live" when a running gjc process has its transcript file open.
  * For the "작동 중" fleet view we also map each live session id → the tmux session
- * NAME it runs in (omg / stock / flask / …), via cwd:
+ * NAME it runs in (omg / stock / flask / …), by PROCESS LINEAGE:
  *   - lsof (-c gjc -F pn) → {session-id uuid, holder pid} for open session files
- *   - /proc/<pid>/cwd     → the gjc process's working dir (realpath)
- *   - tmux list-panes     → {session_name, pane cwd (realpath)}
- *   - match holder cwd to a pane cwd → the tmux session name
+ *   - /proc/<pid>/stat    → the holder's ancestor pid chain
+ *   - tmux list-panes     → {session_name, pane_pid, pane cwd (realpath)}
+ *   - a pane_pid found in the holder's ancestor chain → that pane's tmux name (0 ambiguity)
+ *   - cwd equality is a FALLBACK only (many-to-many when panes share a cwd)
  *
  * Matching is PATH-AGNOSTIC (uuid + realpath'd cwds), so production cloudcli's
  * decoy HOME (whose `.gjc` is a symlink) does not break it. tmux/lsof/proc access
@@ -29,21 +30,23 @@ export function tmuxHasPanes(output: string): boolean {
   return output.split(/\r?\n/).some((line) => line.trim().length > 0);
 }
 
-/** Parses `#{session_name}\t#{pane_current_path}` lines into {name, cwd}. */
-export function parseTmuxPanes(output: string): Array<{ name: string; cwd: string }> {
-  const panes: Array<{ name: string; cwd: string }> = [];
+/** Parses `#{session_name}\t#{pane_pid}\t#{pane_current_path}` into {name, pid, cwd}. */
+export function parseTmuxPanes(output: string): Array<{ name: string; pid: number; cwd: string }> {
+  const panes: Array<{ name: string; pid: number; cwd: string }> = [];
   for (const raw of output.split(/\r?\n/)) {
     if (!raw.trim()) {
       continue;
     }
-    const sep = raw.indexOf(TMUX_FIELD_SEP);
-    if (sep < 0) {
+    const first = raw.indexOf(TMUX_FIELD_SEP);
+    const second = raw.indexOf(TMUX_FIELD_SEP, first + 1);
+    if (first < 0 || second < 0) {
       continue;
     }
-    const name = raw.slice(0, sep).trim();
-    const cwd = raw.slice(sep + 1).trim();
-    if (name && cwd) {
-      panes.push({ name, cwd });
+    const name = raw.slice(0, first).trim();
+    const pid = Number.parseInt(raw.slice(first + 1, second).trim(), 10);
+    const cwd = raw.slice(second + 1).trim();
+    if (name && Number.isFinite(pid) && cwd) {
+      panes.push({ name, pid, cwd });
     }
   }
   return panes;
@@ -75,33 +78,79 @@ export function parseLsofPidSessions(output: string): Array<{ id: string; pid: n
 }
 
 /**
- * Pure match: live sessions (with resolved cwd) → tmux session name. Deduped by
- * session id, preferring a named match. tmuxName is null when no pane cwd matches
- * (or tmux is absent → empty list). Unit-testable without spawning.
+ * Pure match: live gjc sessions → tmux session name by PROCESS LINEAGE, so that
+ * every pane maps to at most ONE session (ambiguity 0). A gjc process belongs to
+ * exactly one pane's process tree, so a pane_pid in the holder's ancestor chain is
+ * authoritative and CLAIMS that pane. cwd equality is a fallback used only for
+ * sessions with no lineage hit, and only against panes not already claimed, and
+ * only when exactly one such pane matches — otherwise null (the UI shows the
+ * conversation title). Holder rows are merged by session id first (main + worker
+ * processes), so either process reaching the pane resolves the name. Empty when
+ * tmux is absent.
  */
 export function computeLiveSessions(args: {
   tmuxPresent: boolean;
-  panes: Array<{ name: string; cwd: string }>;
-  sessions: Array<{ id: string; cwd: string | null }>;
+  panes: Array<{ name: string; pid: number; cwd: string }>;
+  sessions: Array<{ id: string; pidChain: number[]; cwd: string | null }>;
 }): LiveGjcSession[] {
   if (!args.tmuxPresent) {
     return [];
   }
-  const nameByCwd = new Map<string, string>();
-  for (const pane of args.panes) {
-    if (!nameByCwd.has(pane.cwd)) {
-      nameByCwd.set(pane.cwd, pane.name);
+  const panePidToIndex = new Map<number, number>();
+  args.panes.forEach((pane, index) => {
+    if (!panePidToIndex.has(pane.pid)) {
+      panePidToIndex.set(pane.pid, index);
     }
-  }
-  const byId = new Map<string, string | null>();
+  });
+
+  // Merge holder rows into one entry per session id (a session may have several
+  // open-file holders); union their pid chains, keep the first resolved cwd.
+  const merged = new Map<string, { pidChain: number[]; cwd: string | null }>();
   for (const session of args.sessions) {
-    const name = session.cwd ? nameByCwd.get(session.cwd) ?? null : null;
-    const existing = byId.get(session.id);
-    if (existing === undefined || (existing === null && name !== null)) {
-      byId.set(session.id, name);
+    const existing = merged.get(session.id);
+    if (!existing) {
+      merged.set(session.id, { pidChain: [...session.pidChain], cwd: session.cwd });
+    } else {
+      existing.pidChain.push(...session.pidChain);
+      if (!existing.cwd) {
+        existing.cwd = session.cwd;
+      }
     }
   }
-  return [...byId].map(([id, tmuxName]) => ({ id, tmuxName }));
+
+  const claimed = new Set<number>();
+  const result = new Map<string, string | null>();
+
+  // Pass 1: lineage matches claim their pane (authoritative, run for ALL sessions
+  // before any cwd fallback so claims are complete).
+  for (const [id, session] of merged) {
+    let name: string | null = null;
+    for (const pid of session.pidChain) {
+      const index = panePidToIndex.get(pid);
+      if (index !== undefined) {
+        name = args.panes[index].name;
+        claimed.add(index);
+        break;
+      }
+    }
+    result.set(id, name);
+  }
+
+  // Pass 2: cwd fallback to an UNCLAIMED pane, only when the match is unique.
+  for (const [id, session] of merged) {
+    if (result.get(id) !== null || !session.cwd) {
+      continue;
+    }
+    const candidates = args.panes
+      .map((pane, index) => ({ pane, index }))
+      .filter(({ pane, index }) => !claimed.has(index) && pane.cwd === session.cwd);
+    if (candidates.length === 1) {
+      result.set(id, candidates[0].pane.name);
+      claimed.add(candidates[0].index);
+    }
+  }
+
+  return [...result].map(([id, tmuxName]) => ({ id, tmuxName }));
 }
 
 function runCommand(command: string, cmdArgs: string[], timeoutMs = 4000): Promise<string> {
@@ -134,6 +183,40 @@ async function safeRealpath(target: string): Promise<string | null> {
   }
 }
 
+/** Reads the parent pid from /proc/<pid>/stat (comm may contain spaces/parens). */
+async function readParentPid(pid: number): Promise<number | null> {
+  try {
+    const content = await readFile(`/proc/${pid}/stat`, 'utf8');
+    const rparen = content.lastIndexOf(')');
+    if (rparen < 0) {
+      return null;
+    }
+    // After "pid (comm)" the fields are: state ppid pgrp … → index 1 is ppid.
+    const fields = content.slice(rparen + 2).trim().split(/\s+/);
+    const ppid = Number.parseInt(fields[1] ?? '', 10);
+    return Number.isFinite(ppid) ? ppid : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Walks the ancestor pid chain [pid, ppid, …] toward init (depth/cycle guarded). */
+async function buildPidChain(pid: number): Promise<number[]> {
+  const chain: number[] = [];
+  const seen = new Set<number>();
+  let cur = pid;
+  for (let i = 0; i < 64 && cur > 1 && !seen.has(cur); i += 1) {
+    chain.push(cur);
+    seen.add(cur);
+    const parent = await readParentPid(cur);
+    if (parent == null) {
+      break;
+    }
+    cur = parent;
+  }
+  return chain;
+}
+
 /**
  * Returns live gjc sessions with their tmux session name. Empty on any failure
  * (no tmux/lsof, spawn error) — tmux/lsof/proc dependence is confined here.
@@ -141,16 +224,16 @@ async function safeRealpath(target: string): Promise<string | null> {
 export async function getLiveGjcSessions(): Promise<LiveGjcSession[]> {
   let tmuxOutput: string;
   try {
-    tmuxOutput = await runCommand('tmux', ['list-panes', '-a', '-F', `#{session_name}${TMUX_FIELD_SEP}#{pane_current_path}`]);
+    tmuxOutput = await runCommand('tmux', ['list-panes', '-a', '-F', `#{session_name}${TMUX_FIELD_SEP}#{pane_pid}${TMUX_FIELD_SEP}#{pane_current_path}`]);
   } catch {
     return [];
   }
   if (!tmuxHasPanes(tmuxOutput)) {
     return [];
   }
-  const panes: Array<{ name: string; cwd: string }> = [];
+  const panes: Array<{ name: string; pid: number; cwd: string }> = [];
   for (const pane of parseTmuxPanes(tmuxOutput)) {
-    panes.push({ name: pane.name, cwd: (await safeRealpath(pane.cwd)) ?? pane.cwd });
+    panes.push({ name: pane.name, pid: pane.pid, cwd: (await safeRealpath(pane.cwd)) ?? pane.cwd });
   }
 
   let lsofOutput: string;
@@ -159,9 +242,13 @@ export async function getLiveGjcSessions(): Promise<LiveGjcSession[]> {
   } catch {
     return [];
   }
-  const sessions: Array<{ id: string; cwd: string | null }> = [];
+  const sessions: Array<{ id: string; pidChain: number[]; cwd: string | null }> = [];
   for (const { id, pid } of parseLsofPidSessions(lsofOutput)) {
-    sessions.push({ id, cwd: await safeRealpath(`/proc/${pid}/cwd`) });
+    sessions.push({
+      id,
+      pidChain: await buildPidChain(pid),
+      cwd: await safeRealpath(`/proc/${pid}/cwd`),
+    });
   }
 
   return computeLiveSessions({ tmuxPresent: true, panes, sessions });
