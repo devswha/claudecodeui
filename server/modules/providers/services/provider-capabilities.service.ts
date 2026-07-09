@@ -80,7 +80,7 @@ const PROVIDER_CAPABILITIES: Record<LLMProvider, ProviderCapabilities> = {
     permissionModes: ['default'],
     defaultPermissionMode: 'default',
     supportsImages: false,
-    supportsAbort: false,
+    supportsAbort: true,
     supportsPermissionRequests: false,
     supportsTokenUsage: false,
     supportsEffort: false,

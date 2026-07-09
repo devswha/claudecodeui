@@ -10,6 +10,7 @@ import { queryClaudeSDK } from '../claude-sdk.js';
 import { spawnCursor } from '../cursor-cli.js';
 import { queryCodex } from '../openai-codex.js';
 import { spawnOpenCode } from '../opencode-cli.js';
+import { spawnGjc } from '../gjc-cli.js';
 import { Octokit } from '@octokit/rest';
 import { providerModelsService } from '../modules/providers/services/provider-models.service.js';
 import { IS_PLATFORM } from '../constants/config.js';
@@ -870,8 +871,8 @@ router.post('/', validateExternalApiKey, async (req, res) => {
     return res.status(400).json({ error: 'message is required' });
   }
 
-  if (!['claude', 'cursor', 'codex', 'opencode'].includes(provider)) {
-    return res.status(400).json({ error: 'provider must be "claude", "cursor", "codex", or "opencode"' });
+  if (!['claude', 'cursor', 'codex', 'opencode', 'gjc'].includes(provider)) {
+    return res.status(400).json({ error: 'provider must be "claude", "cursor", "codex", "opencode", or "gjc"' });
   }
 
   // Validate GitHub branch/PR creation requirements
@@ -996,6 +997,18 @@ router.post('/', validateExternalApiKey, async (req, res) => {
         model: model || opencodeModels.DEFAULT,
         effort,
         permissionMode: 'bypassPermissions' // Agent runs are non-interactive, like the other providers above
+      }, writer);
+    } else if (provider === 'gjc') {
+      console.log('🦞 Starting gjc headless session');
+
+      await spawnGjc(message.trim(), {
+        projectPath: finalProjectPath,
+        cwd: finalProjectPath,
+        sessionId: sessionId || null,
+        model: model || undefined,
+        effort,
+        permissionMode: 'bypassPermissions',
+        sessionDir: process.env.GJC_LIVE_SESSION_DIR || undefined,
       }, writer);
     }
 

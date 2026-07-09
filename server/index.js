@@ -40,6 +40,10 @@ import {
     abortOpenCodeSession,
 } from './opencode-cli.js';
 import {
+    spawnGjc,
+    abortGjcSession,
+} from './gjc-cli.js';
+import {
     stripAnsiSequences,
     normalizeDetectedUrl,
     extractUrlsFromText,
@@ -114,12 +118,14 @@ const wss = createWebSocketServer(server, {
             cursor: spawnCursor,
             codex: queryCodex,
             opencode: spawnOpenCode,
+            gjc: spawnGjc,
         },
         abortFns: {
             claude: abortClaudeSDKSession,
             cursor: abortCursorSession,
             codex: abortCodexSession,
             opencode: abortOpenCodeSession,
+            gjc: abortGjcSession,
         },
         resolveToolApproval,
         getPendingApprovalsForSession,
