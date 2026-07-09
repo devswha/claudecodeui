@@ -872,6 +872,18 @@ export function useProjectsState({
 
   const handleSessionSelect = useCallback(
     (session: ProjectSession) => {
+      // Driver-duplication guard: a session live in a tmux gjc pane is being driven
+      // elsewhere. Warn before opening it here so two drivers don't fight over one run.
+      if (liveSessionIds.has(session.id)) {
+        const proceed = window.confirm(
+          '이 세션은 지금 tmux의 gjc에서 작동 중입니다.\n'
+            + '여기서 이어서 대화하면 운전자 이중화(같은 세션을 둘이 동시에 조작) 위험이 있습니다.\n\n'
+            + '그래도 열까요? (보기만 권장, 조작은 tmux 쪽에서)',
+        );
+        if (!proceed) {
+          return;
+        }
+      }
       clearSessionAttention(session.id);
       setSelectedSession(session);
 
@@ -894,7 +906,7 @@ export function useProjectsState({
 
       navigate(`/session/${session.id}`);
     },
-    [activeTab, clearSessionAttention, isMobile, navigate, selectedProject?.projectId],
+    [activeTab, clearSessionAttention, isMobile, liveSessionIds, navigate, selectedProject?.projectId],
   );
 
   const handleNewSession = useCallback(
