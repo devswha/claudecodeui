@@ -77,6 +77,31 @@ async function getGjcSessionMessages(sessionId: string): Promise<GjcHistoryResul
           ? message.content
           : (typeof message.content === 'string' ? [{ type: 'text', text: message.content }] : []);
 
+        // gjc records a tool RESULT as a top-level message with role 'toolResult'
+        // whose content is plain text parts. Emit one tool_result here (paired to
+        // its tool_use by toolCallId downstream) so the UI folds it into the tool
+        // block instead of dumping the raw output as chat text.
+        if (role === 'toolResult') {
+          const output = content
+            .map((rawPart) => {
+              if (!rawPart || typeof rawPart !== 'object') {
+                return '';
+              }
+              const text = (rawPart as AnyRecord).text;
+              return typeof text === 'string' ? text : '';
+            })
+            .join('');
+          messages.push({
+            uuid: `${entryId}:toolresult`,
+            type: 'tool_result',
+            timestamp,
+            toolCallId: message.toolCallId ?? message.callId,
+            output,
+            isError: Boolean(message.isError),
+          });
+          continue;
+        }
+
         let partIndex = 0;
         for (const rawPart of content) {
           if (!rawPart || typeof rawPart !== 'object') {

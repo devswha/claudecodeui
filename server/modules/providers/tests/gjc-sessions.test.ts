@@ -94,9 +94,14 @@ const writeGjcTranscript = async (
       id: 'msg-3',
       parentId: 'msg-2',
       timestamp: '2026-07-09T00:00:03.000Z',
+      // Real gjc shape: a tool RESULT is its own top-level message with
+      // role 'toolResult', toolCallId/toolName on the message, and plain text parts.
       message: {
         role: 'toolResult',
-        content: [{ type: 'toolResult', toolCallId: 'call-1', output: 'file.txt', isError: false }],
+        toolCallId: 'call-1',
+        toolName: 'Bash',
+        content: [{ type: 'text', text: 'file.txt' }],
+        isError: false,
       },
     }));
     // Non-message control events must be ignored by both indexer and history reader.
