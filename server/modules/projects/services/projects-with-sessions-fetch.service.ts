@@ -75,6 +75,11 @@ export type ProjectSessionsPageApiView = {
 
 const DEFAULT_PROJECT_SESSIONS_PAGE_SIZE = 20;
 const MAX_PROJECT_SESSIONS_PAGE_SIZE = 200;
+// Eager per-project session slice for the project LIST endpoint. Kept small so the
+// initial /api/projects payload stays bounded even when a few heavy projects hold
+// many sessions (real gjc data: top projects hold 80/60/49… sessions). The frontend
+// lazy-loads the rest per project via getProjectSessionsPage + sessionMeta.hasMore.
+const INITIAL_PROJECT_SESSIONS_PAGE_SIZE = 5;
 
 /**
  * Generate better display name from path.
@@ -213,7 +218,7 @@ export async function getProjectsWithSessions(
         : await generateDisplayName(path.basename(projectPath) || projectPath, projectPath);
 
     const sessionsPage = readProjectSessionsPageByPath(projectPath, {
-      limit: options.sessionsLimit,
+      limit: options.sessionsLimit ?? INITIAL_PROJECT_SESSIONS_PAGE_SIZE,
       offset: options.sessionsOffset,
     });
 
