@@ -241,6 +241,7 @@ function AppContentInner() {
         <MainContent
           selectedProject={selectedProject}
           selectedSession={selectedSession}
+          isSessionReadOnly={Boolean(selectedSession && sidebarSharedProps.liveSessionIds.has(selectedSession.id))}
           activeTab={activeTab}
           setActiveTab={setActiveTab}
           ws={ws}

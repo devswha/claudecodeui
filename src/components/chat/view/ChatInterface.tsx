@@ -20,6 +20,7 @@ import CommandResultModal from './subcomponents/CommandResultModal';
 function ChatInterface({
   selectedProject,
   selectedSession,
+  isSessionReadOnly,
   ws,
   sendMessage,
   onFileOpen,
@@ -381,6 +382,14 @@ function ChatInterface({
             </div>
           )}
 
+          {isSessionReadOnly ? (
+            <div className="chat-composer-shell relative flex-shrink-0 px-2 pb-3 pt-2 sm:px-4">
+              <div className="mx-auto flex max-w-[54.25rem] items-center gap-2 rounded-xl border border-blue-500/30 bg-blue-500/10 px-4 py-3 text-sm text-blue-700 dark:text-blue-300">
+                <span className="inline-flex h-2 w-2 shrink-0 animate-pulse rounded-full bg-blue-500" aria-hidden />
+                <span>tmux의 gjc에서 작동 중 — 열람 전용입니다. 실시간으로 갱신되며, 조작은 tmux 쪽에서 하세요.</span>
+              </div>
+            </div>
+          ) : (
           <ChatComposer
           pendingPermissionRequests={pendingPermissionRequests}
           handlePermissionDecision={handlePermissionDecision}
@@ -451,6 +460,7 @@ function ChatInterface({
           isTextareaExpanded={isTextareaExpanded}
           sendByCtrlEnter={sendByCtrlEnter}
         />
+          )}
         </div>
       </div>
 

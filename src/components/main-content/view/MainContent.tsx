@@ -36,6 +36,7 @@ type TasksSettingsContextValue = {
 function MainContent({
   selectedProject,
   selectedSession,
+  isSessionReadOnly,
   activeTab,
   setActiveTab,
   ws,
@@ -160,6 +161,7 @@ function MainContent({
               <ChatInterface
                 selectedProject={selectedProject}
                 selectedSession={selectedSession}
+                isSessionReadOnly={isSessionReadOnly}
                 ws={ws}
                 sendMessage={sendMessage}
                 onFileOpen={handleFileOpen}
