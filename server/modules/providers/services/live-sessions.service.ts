@@ -1,96 +1,61 @@
 import { spawn } from 'node:child_process';
-import os from 'node:os';
 
 /**
  * Live gjc session detection.
  *
- * A gjc session is "live" when a running gjc TUI process (in a tmux pane) has its
- * transcript file open. We derive that from two signals and intersect them:
- *   - tmux `list-panes` current paths  → which cwds have live gjc panes
- *   - lsof on gjc processes            → which `~/.gjc/agent/sessions/<slug>/<ts>_<uuid>.jsonl`
- *                                         files are currently held open (uuid = session id)
+ * A gjc session is "live" when a running gjc process has its transcript file
+ * (`…/.gjc/agent/sessions/<slug>/<ts>_<uuid>.jsonl`) open. We detect that with:
+ *   - lsof on gjc processes → the session ids (uuid from the filename) held open
+ *   - tmux `list-panes`     → a presence gate; with no tmux server we return []
  *
- * The tmux/lsof shell dependency is ISOLATED to this module: any failure (tmux not
- * installed, no server, lsof missing) degrades gracefully to an empty list, so the
- * rest of the app never depends on tmux being present.
+ * Matching is PATH-AGNOSTIC (by session-id uuid), deliberately NOT by home-derived
+ * path prefixes: production cloudcli runs under a decoy HOME whose `.gjc` is a
+ * SYMLINK to the real `~/.gjc`, and lsof reports the resolved real path. Comparing
+ * home-derived slugs (using this process's HOME) therefore never matched. The uuid
+ * is stable regardless of which path (symlink or real) lsof reports.
+ *
+ * All tmux/lsof shell dependence is ISOLATED here and fails closed to [].
  */
 
 const SESSIONS_SEGMENT = '.gjc/agent/sessions';
 
-// Matches `…/.gjc/agent/sessions/<slug>/<ts>_<uuid>.jsonl` → [_, slug, sessionId].
-const SESSION_FILE_RE = /\.gjc\/agent\/sessions\/([^/]+)\/[^/]*_([0-9a-fA-F][0-9a-fA-F-]{7,})\.jsonl\b/;
+// Matches `…/.gjc/agent/sessions/<slug>/<ts>_<uuid>.jsonl` → captures the uuid.
+// Works for both the real path and a symlinked (decoy-HOME) path.
+const SESSION_FILE_RE = /\.gjc\/agent\/sessions\/[^/]+\/[^/]*_([0-9a-fA-F][0-9a-fA-F-]{7,})\.jsonl\b/;
 
-/**
- * gjc slugs a cwd by stripping the home-dir prefix and replacing path separators
- * with '-' (e.g. `/home/u/workspace/patina` → `-workspace-patina`,
- * `/home/u/Downloads` → `-Downloads`). Pure so it is unit-testable.
- */
-export function sessionSlugFromCwd(cwd: string, home: string): string {
-  const trimmed = cwd.replace(/\/+$/, '');
-  const rel = home && trimmed.startsWith(home) ? trimmed.slice(home.length) : trimmed;
-  return rel.replace(/\//g, '-');
+/** True when `tmux list-panes` reported at least one pane (a tmux server is up). */
+export function tmuxHasPanes(output: string): boolean {
+  return output.split(/\r?\n/).some((line) => line.trim().length > 0);
 }
 
-/** Parses `tmux list-panes` output (one current path per line) into unique cwds. */
-export function parseTmuxCwds(output: string): string[] {
-  const cwds = new Set<string>();
-  for (const raw of output.split(/\r?\n/)) {
-    const line = raw.trim();
-    if (line) {
-      cwds.add(line);
-    }
-  }
-  return [...cwds];
-}
-
-/** Extracts `{ sessionId, slug }` from every gjc session file path in lsof output. */
-export function parseLsofSessionFiles(output: string): Array<{ sessionId: string; slug: string }> {
-  const out: Array<{ sessionId: string; slug: string }> = [];
-  const seen = new Set<string>();
+/** Extracts unique gjc session ids (uuids) from lsof output, path-agnostic. */
+export function parseLsofSessionIds(output: string): string[] {
+  const ids = new Set<string>();
   for (const raw of output.split(/\r?\n/)) {
     if (!raw.includes(SESSIONS_SEGMENT)) {
       continue;
     }
     const match = SESSION_FILE_RE.exec(raw);
-    if (!match) {
-      continue;
-    }
-    const slug = match[1];
-    const sessionId = match[2];
-    const key = `${slug}\u0000${sessionId}`;
-    if (!seen.has(key)) {
-      seen.add(key);
-      out.push({ sessionId, slug });
+    if (match) {
+      ids.add(match[1]);
     }
   }
-  return out;
+  return [...ids];
 }
 
 /**
- * Intersects tmux cwds with lsof-held session files: a session is live when its
- * file is open by a gjc process AND its slug belongs to a live tmux pane cwd.
- * Pure so it is unit-testable without spawning anything.
+ * Live ids = gjc-held session ids, gated on tmux being present. Pure, so it is
+ * unit-testable (including the symlinked-path / decoy-HOME regression) without
+ * spawning anything.
  */
-export function computeLiveSessionIds(args: {
-  tmuxCwds: string[];
-  lsofFiles: Array<{ sessionId: string; slug: string }>;
-  home: string;
-}): string[] {
-  const { tmuxCwds, lsofFiles, home } = args;
-  if (tmuxCwds.length === 0) {
+export function computeLiveSessionIds(args: { tmuxPresent: boolean; lsofSessionIds: string[] }): string[] {
+  if (!args.tmuxPresent) {
     return [];
   }
-  const tmuxSlugs = new Set(tmuxCwds.map((cwd) => sessionSlugFromCwd(cwd, home)));
-  const live = new Set<string>();
-  for (const { sessionId, slug } of lsofFiles) {
-    if (tmuxSlugs.has(slug)) {
-      live.add(sessionId);
-    }
-  }
-  return [...live];
+  return [...new Set(args.lsofSessionIds)];
 }
 
-/** Runs a command, resolving trimmed stdout. Rejects on spawn error / non-zero exit. */
+/** Runs a command, resolving trimmed stdout. Rejects on spawn error / timeout. */
 function runCommand(command: string, cmdArgs: string[], timeoutMs = 4000): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, cmdArgs, { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
@@ -114,8 +79,8 @@ function runCommand(command: string, cmdArgs: string[], timeoutMs = 4000): Promi
 }
 
 /**
- * Returns the set of gjc session ids currently live in tmux. Empty on any failure
- * (no tmux, no lsof, spawn error) — tmux/lsof dependence is confined here.
+ * Returns the gjc session ids currently live. Empty on any failure (no tmux, no
+ * lsof, spawn error) — tmux/lsof dependence is confined to this function.
  */
 export async function getLiveGjcSessionIds(): Promise<string[]> {
   let tmuxOutput: string;
@@ -124,8 +89,7 @@ export async function getLiveGjcSessionIds(): Promise<string[]> {
   } catch {
     return []; // tmux absent / no server → graceful degradation
   }
-  const tmuxCwds = parseTmuxCwds(tmuxOutput);
-  if (tmuxCwds.length === 0) {
+  if (!tmuxHasPanes(tmuxOutput)) {
     return [];
   }
 
@@ -136,7 +100,6 @@ export async function getLiveGjcSessionIds(): Promise<string[]> {
   } catch {
     return [];
   }
-  const lsofFiles = parseLsofSessionFiles(lsofOutput);
 
-  return computeLiveSessionIds({ tmuxCwds, lsofFiles, home: os.homedir() });
+  return computeLiveSessionIds({ tmuxPresent: true, lsofSessionIds: parseLsofSessionIds(lsofOutput) });
 }

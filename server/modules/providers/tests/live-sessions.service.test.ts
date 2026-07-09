@@ -3,57 +3,47 @@ import test from 'node:test';
 
 import {
   computeLiveSessionIds,
-  parseLsofSessionFiles,
-  parseTmuxCwds,
-  sessionSlugFromCwd,
+  parseLsofSessionIds,
+  tmuxHasPanes,
 } from '@/modules/providers/services/live-sessions.service.js';
 
-const HOME = '/home/devswha';
-
-test('sessionSlugFromCwd mirrors gjc slug convention (strip home, / -> -)', () => {
-  assert.equal(sessionSlugFromCwd('/home/devswha/workspace/patina', HOME), '-workspace-patina');
-  assert.equal(sessionSlugFromCwd('/home/devswha/Downloads', HOME), '-Downloads');
-  assert.equal(sessionSlugFromCwd('/home/devswha/workspace/oh-my-gjc/', HOME), '-workspace-oh-my-gjc');
-  assert.equal(sessionSlugFromCwd('/opt/elsewhere', HOME), '-opt-elsewhere');
+test('tmuxHasPanes detects a running tmux server (>=1 pane line)', () => {
+  assert.equal(tmuxHasPanes('/home/u/workspace/a\n/home/u/workspace/b\n'), true);
+  assert.equal(tmuxHasPanes('   \n\n'), false);
+  assert.equal(tmuxHasPanes(''), false);
 });
 
-test('parseTmuxCwds returns unique trimmed non-empty cwds', () => {
-  const out = ['/home/devswha/workspace/flask', '', '  /home/devswha/workspace/patina  ', '/home/devswha/workspace/flask'].join('\n');
-  assert.deepEqual(parseTmuxCwds(out).sort(), ['/home/devswha/workspace/flask', '/home/devswha/workspace/patina']);
-});
-
-test('parseLsofSessionFiles extracts sessionId + slug from lsof -F n output', () => {
+test('parseLsofSessionIds extracts uuids path-agnostically (real path)', () => {
   const lsof = [
     'p3304033',
     'n/home/devswha/.gjc/agent/sessions/-workspace-patina/2026-07-09T11-22-59-921Z_019f469d-e1d1-7000-a9aa-a942784b0e2b.jsonl',
     'n/home/devswha/.gjc/agent/logs/app.log',
-    'p1506085',
-    'n/home/devswha/.gjc/agent/sessions/-Downloads/2026-07-04T04-42-55-461Z_019f2b6f-ce65-7000-8b07-cf0be8b85be0.jsonl',
   ].join('\n');
-  const files = parseLsofSessionFiles(lsof);
-  assert.deepEqual(files, [
-    { sessionId: '019f469d-e1d1-7000-a9aa-a942784b0e2b', slug: '-workspace-patina' },
-    { sessionId: '019f2b6f-ce65-7000-8b07-cf0be8b85be0', slug: '-Downloads' },
-  ]);
+  assert.deepEqual(parseLsofSessionIds(lsof), ['019f469d-e1d1-7000-a9aa-a942784b0e2b']);
 });
 
-test('computeLiveSessionIds intersects tmux panes with lsof-held files', () => {
-  const tmuxCwds = ['/home/devswha/workspace/patina', '/home/devswha/workspace/flask'];
-  const lsofFiles = [
-    { sessionId: 'sess-patina', slug: '-workspace-patina' },
-    { sessionId: 'sess-flask', slug: '-workspace-flask' },
-    // Held open but NOT in a tmux pane (e.g. Downloads) -> excluded.
-    { sessionId: 'sess-downloads', slug: '-Downloads' },
-  ];
-  const live = computeLiveSessionIds({ tmuxCwds, lsofFiles, home: HOME }).sort();
-  assert.deepEqual(live, ['sess-flask', 'sess-patina']);
+test('parseLsofSessionIds works when .gjc is reached via a decoy-HOME symlink path', () => {
+  // Production cloudcli runs under HOME=/home/devswha/.cloudcli-home whose .gjc is a
+  // symlink to /home/devswha/.gjc; lsof may report either path form. Both must parse.
+  const symlinkPath = 'n/home/devswha/.cloudcli-home/.gjc/agent/sessions/-workspace-flask/2026-07-09T11-39-51-634Z_019f46ad-51d2-7000-a5ea-facfd7f23f52.jsonl';
+  const realPath = 'n/home/devswha/.gjc/agent/sessions/-workspace-flask/2026-07-09T11-39-51-634Z_019f46ad-51d2-7000-a5ea-facfd7f23f52.jsonl';
+  assert.deepEqual(parseLsofSessionIds(symlinkPath), ['019f46ad-51d2-7000-a5ea-facfd7f23f52']);
+  assert.deepEqual(parseLsofSessionIds(realPath), ['019f46ad-51d2-7000-a5ea-facfd7f23f52']);
+  // De-duped when both forms appear.
+  assert.deepEqual(parseLsofSessionIds(`${symlinkPath}\n${realPath}`), ['019f46ad-51d2-7000-a5ea-facfd7f23f52']);
 });
 
-test('computeLiveSessionIds returns empty when no tmux panes (graceful degradation)', () => {
+test('computeLiveSessionIds returns held session ids when tmux is present', () => {
   const live = computeLiveSessionIds({
-    tmuxCwds: [],
-    lsofFiles: [{ sessionId: 'x', slug: '-workspace-patina' }],
-    home: HOME,
-  });
-  assert.deepEqual(live, []);
+    tmuxPresent: true,
+    lsofSessionIds: ['a', 'b', 'a'],
+  }).sort();
+  assert.deepEqual(live, ['a', 'b']);
+});
+
+test('computeLiveSessionIds returns empty when no tmux (graceful degradation)', () => {
+  assert.deepEqual(
+    computeLiveSessionIds({ tmuxPresent: false, lsofSessionIds: ['a', 'b'] }),
+    [],
+  );
 });
