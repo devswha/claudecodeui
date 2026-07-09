@@ -221,22 +221,30 @@ export default function SidebarContent({
         t={t}
       />
 
-      <div className="flex gap-1 px-2 pt-2 md:px-1.5">
-        <button
-          type="button"
-          onClick={() => setTopTab('live')}
-          className={`flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${topTab === 'live' ? 'bg-primary/10 text-foreground' : 'text-muted-foreground hover:bg-muted/50'}`}
-        >
-          <span className="inline-flex h-1.5 w-1.5 rounded-full bg-blue-500" aria-hidden />
-          작동 중{projectListProps.liveSessionIds.size > 0 ? ` (${projectListProps.liveSessionIds.size})` : ''}
-        </button>
-        <button
-          type="button"
-          onClick={() => setTopTab('archive')}
-          className={`flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${topTab === 'archive' ? 'bg-primary/10 text-foreground' : 'text-muted-foreground hover:bg-muted/50'}`}
-        >
-          보관함
-        </button>
+      <div className="flex items-center justify-between gap-2 px-2 pt-2 md:px-1.5">
+        {topTab === 'live' ? (
+          <>
+            <span className="flex items-center gap-1.5 px-1 text-xs font-semibold text-foreground">
+              <span className="inline-flex h-1.5 w-1.5 rounded-full bg-blue-500" aria-hidden />
+              작동 중{projectListProps.liveSessionIds.size > 0 ? ` (${projectListProps.liveSessionIds.size})` : ''}
+            </span>
+            <button
+              type="button"
+              onClick={() => setTopTab('archive')}
+              className="rounded-md px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+            >
+              기록
+            </button>
+          </>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setTopTab('live')}
+            className="flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+          >
+            ← 작동 중
+          </button>
+        )}
       </div>
 
       {topTab === 'live' ? (
