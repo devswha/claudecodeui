@@ -149,6 +149,7 @@ type SidebarContentProps = {
   onShowVersionModal: () => void;
   onShowSettings: () => void;
   projectListProps: SidebarProjectListProps;
+  liveSessionNames: ReadonlyMap<string, string>;
   t: TFunction;
 };
 
@@ -187,6 +188,7 @@ export default function SidebarContent({
   onShowVersionModal,
   onShowSettings,
   projectListProps,
+  liveSessionNames,
   t,
 }: SidebarContentProps) {
   const [topTab, setTopTab] = useState<'live' | 'archive'>('live');
@@ -249,6 +251,7 @@ export default function SidebarContent({
               liveSessionIds={projectListProps.liveSessionIds}
               selectedSession={projectListProps.selectedSession}
               onSessionSelect={projectListProps.onSessionSelect}
+              liveSessionNames={liveSessionNames}
             />
           )}
         </ScrollArea>

@@ -28,6 +28,7 @@ function Sidebar({
   activeSessions,
   attentionSessionIds,
   liveSessionIds,
+  liveSessionNames,
   onProjectSelect,
   onSessionSelect,
   onNewSession,
@@ -308,6 +309,7 @@ function Sidebar({
             onShowVersionModal={() => setShowVersionModal(true)}
             onShowSettings={onShowSettings}
             projectListProps={projectListProps}
+            liveSessionNames={liveSessionNames}
             t={t}
           />
         </>

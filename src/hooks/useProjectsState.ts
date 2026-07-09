@@ -361,6 +361,7 @@ export function useProjectsState({
   const [selectedSession, setSelectedSession] = useState<ProjectSession | null>(null);
   const [attentionSessionIds, setAttentionSessionIds] = useState<Set<string>>(new Set());
   const [liveSessionIds, setLiveSessionIds] = useState<Set<string>>(new Set());
+  const [liveSessionNames, setLiveSessionNames] = useState<Map<string, string>>(new Map());
   const [activeTab, setActiveTab] = useState<AppTab>(readPersistedTab);
 
   useEffect(() => {
@@ -380,8 +381,21 @@ export function useProjectsState({
         const response = await api.liveSessions();
         if (!response.ok) return;
         const body = await response.json();
-        const ids: string[] = body?.data?.liveSessionIds ?? body?.liveSessionIds ?? [];
-        if (!cancelled) setLiveSessionIds(new Set(ids));
+        const liveSessions: Array<{ id: string; tmuxName?: string | null }> =
+          body?.data?.liveSessions ?? body?.liveSessions ?? [];
+        const ids: string[] = liveSessions.length > 0
+          ? liveSessions.map((session) => session.id)
+          : (body?.data?.liveSessionIds ?? body?.liveSessionIds ?? []);
+        if (!cancelled) {
+          setLiveSessionIds(new Set(ids));
+          const names = new Map<string, string>();
+          for (const session of liveSessions) {
+            if (session.tmuxName) {
+              names.set(session.id, session.tmuxName);
+            }
+          }
+          setLiveSessionNames(names);
+        }
       } catch {
         // ignore — live detection is best-effort
       }
@@ -1050,6 +1064,7 @@ export function useProjectsState({
       activeSessions,
       attentionSessionIds,
       liveSessionIds,
+      liveSessionNames,
       onProjectSelect: handleProjectSelect,
       onSessionSelect: handleSessionSelect,
       onNewSession: handleNewSession,
@@ -1068,6 +1083,7 @@ export function useProjectsState({
     [
       attentionSessionIds,
       liveSessionIds,
+      liveSessionNames,
       handleNewSession,
       handleProjectDelete,
       handleProjectSelect,
