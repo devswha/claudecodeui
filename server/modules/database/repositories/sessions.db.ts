@@ -390,6 +390,36 @@ export const sessionsDb = {
     return Number(row?.count ?? 0);
   },
 
+  getSessionsByProjectPathIncludingArchivedPage(projectPath: string, limit: number, offset: number): SessionRow[] {
+    const db = getConnection();
+    const normalizedProjectPath = normalizeProjectPath(projectPath);
+    const rows = db
+      .prepare(
+        `SELECT ${SESSION_ROW_COLUMNS}
+         FROM sessions
+         WHERE project_path = ?
+         ORDER BY datetime(COALESCE(updated_at, created_at)) DESC, session_id DESC
+         LIMIT ? OFFSET ?`
+      )
+      .all(normalizedProjectPath, limit, offset) as SessionRow[];
+
+    return normalizeSessionRows(rows);
+  },
+
+  countSessionsByProjectPathIncludingArchived(projectPath: string): number {
+    const db = getConnection();
+    const normalizedProjectPath = normalizeProjectPath(projectPath);
+    const row = db
+      .prepare(
+        `SELECT COUNT(*) AS count
+         FROM sessions
+         WHERE project_path = ?`
+      )
+      .get(normalizedProjectPath) as { count: number } | undefined;
+
+    return Number(row?.count ?? 0);
+  },
+
   deleteSessionsByProjectPath(projectPath: string): void {
     const db = getConnection();
     const normalizedProjectPath = normalizeProjectPath(projectPath);

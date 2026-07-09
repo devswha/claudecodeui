@@ -132,13 +132,22 @@ function mapSessionRowToSummary(row: SessionRepositoryRow): SessionSummary {
   };
 }
 
-function readProjectSessionsIncludingArchived(projectPath: string): ProjectSessionsPageResult {
-  const rows = sessionsDb.getSessionsByProjectPathIncludingArchived(projectPath) as SessionRepositoryRow[];
+function readProjectSessionsIncludingArchived(
+  projectPath: string,
+  options: SessionPaginationOptions = {},
+): ProjectSessionsPageResult {
+  const pagination = normalizeSessionPagination(options);
+  const rows = sessionsDb.getSessionsByProjectPathIncludingArchivedPage(
+    projectPath,
+    pagination.limit,
+    pagination.offset,
+  ) as SessionRepositoryRow[];
+  const total = sessionsDb.countSessionsByProjectPathIncludingArchived(projectPath);
 
   return {
     sessions: rows.map(mapSessionRowToSummary),
-    total: rows.length,
-    hasMore: false,
+    total,
+    hasMore: pagination.offset + rows.length < total,
   };
 }
 
@@ -246,12 +255,13 @@ export async function getProjectsWithSessions(
 }
 
 /**
- * Reads archived projects from DB and includes every session row for each
- * project path, because an archived workspace should surface all preserved
- * conversation history in the archive view regardless of each session's flag.
+ * Reads archived projects from DB. Each project's preserved history (active +
+ * archived sessions) is returned as a bounded page; the full history stays
+ * reachable via `sessionsLimit`/`sessionsOffset` (sessionMeta.hasMore/total),
+ * so the archive view is not a single unbounded payload.
  */
 export async function getArchivedProjectsWithSessions(
-  options: Pick<GetProjectsWithSessionsOptions, 'skipSynchronization'> = {},
+  options: Pick<GetProjectsWithSessionsOptions, 'skipSynchronization' | 'sessionsLimit' | 'sessionsOffset'> = {},
 ): Promise<ArchivedProjectListItem[]> {
   if (!options.skipSynchronization) {
     await sessionSynchronizerService.synchronizeSessions();
@@ -272,7 +282,10 @@ export async function getArchivedProjectsWithSessions(
         ? row.custom_project_name
         : await generateDisplayName(path.basename(row.project_path) || row.project_path, row.project_path);
 
-    const sessionsPage = readProjectSessionsIncludingArchived(row.project_path);
+    const sessionsPage = readProjectSessionsIncludingArchived(row.project_path, {
+      limit: options.sessionsLimit,
+      offset: options.sessionsOffset,
+    });
 
     archivedProjects.push({
       projectId: row.project_id,

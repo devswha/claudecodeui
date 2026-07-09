@@ -84,8 +84,10 @@ router.get(
 
 router.get(
   '/archived',
-  asyncHandler(async (_req, res) => {
-    const projects = await getArchivedProjectsWithSessions();
+  asyncHandler(async (req, res) => {
+    const sessionsLimit = readOptionalNumericQueryValue(req.query.sessionsLimit) ?? undefined;
+    const sessionsOffset = readOptionalNumericQueryValue(req.query.sessionsOffset) ?? undefined;
+    const projects = await getArchivedProjectsWithSessions({ sessionsLimit, sessionsOffset });
     res.json(createApiSuccessResponse({ projects }));
   }),
 );
