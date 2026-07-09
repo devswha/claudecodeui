@@ -1,5 +1,7 @@
 import os from 'node:os';
 import path from 'node:path';
+import { writeFileSync, unlinkSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 
 import crossSpawn from 'cross-spawn';
 
@@ -24,6 +26,24 @@ const activeGjcProcesses = new Map();
 // GJC_CODING_AGENT_DIR, which would isolate credentials too and break the
 // default model).
 const DEFAULT_SESSION_DIR = path.join(os.tmpdir(), 'gjc-live-sessions');
+
+/**
+ * Builds the gjc prompt argv token. gjc's parser treats any token starting with
+ * `-` as a flag (even after a `--` separator), so a dash-leading chat message
+ * would be swallowed into an empty prompt. gjc reads a prompt from a file via the
+ * `@<path>` mention and file content is never arg-parsed, so dash-leading messages
+ * are written to a temp file and passed as `@file`. Plain messages pass through as
+ * a positional. Returns the argv token and the temp file to clean up (or null).
+ */
+export function buildPromptArg(message, tmpDir = os.tmpdir()) {
+  const promptText = String(message ?? '');
+  if (promptText.startsWith('-')) {
+    const tempFile = path.join(tmpDir, `gjc-prompt-${randomUUID()}.txt`);
+    writeFileSync(tempFile, promptText, 'utf8');
+    return { arg: `@${tempFile}`, tempFile };
+  }
+  return { arg: promptText, tempFile: null };
+}
 
 /**
  * Reads the gjc session id from the NDJSON header event.
@@ -416,9 +436,7 @@ async function spawnGjc(message, options = {}, writer) {
       }
     };
 
-    // gjc reads the prompt from stdin when stdin is piped (Bun reports
-    // isTTY === false), so the user prompt never enters argv — safe for prompts
-    // that start with `-`.
+    let promptTempFile = null;
     const args = ['-p', '--mode', 'json', '--session-dir', resolvedSessionDir];
     if (sessionId) {
       args.push('-r', sessionId);
@@ -426,9 +444,11 @@ async function spawnGjc(message, options = {}, writer) {
     if (model) {
       args.push('--model', model);
     }
-    // gjc -p reads the prompt as a positional arg (it does NOT read piped stdin in
-    // print mode). cross-spawn passes argv without a shell, so this is injection-safe.
-    args.push(String(message ?? ''));
+    // gjc's parser treats a `-`-leading token as a flag; route such prompts through
+    // a temp file via `@file` (see buildPromptArg). Plain messages stay positional.
+    const builtPrompt = buildPromptArg(message);
+    promptTempFile = builtPrompt.tempFile;
+    args.push(builtPrompt.arg);
 
     gjcProcess = spawnFunction('gjc', args, {
       cwd: workingDir,
@@ -472,6 +492,7 @@ async function spawnGjc(message, options = {}, writer) {
       const finalSessionId = capturedSessionId || sessionId || processKey;
       activeGjcProcesses.delete(finalSessionId);
       activeGjcProcesses.delete(processKey);
+      if (promptTempFile) { try { unlinkSync(promptTempFile); } catch { /* best-effort */ } promptTempFile = null; }
 
       if (stdoutLineBuffer.trim()) {
         processGjcOutputLine(stdoutLineBuffer.trim());
@@ -515,6 +536,7 @@ async function spawnGjc(message, options = {}, writer) {
       const finalSessionId = capturedSessionId || sessionId || processKey;
       activeGjcProcesses.delete(finalSessionId);
       activeGjcProcesses.delete(processKey);
+      if (promptTempFile) { try { unlinkSync(promptTempFile); } catch { /* best-effort */ } promptTempFile = null; }
 
       const installed = await providerAuthService.isProviderInstalled(PROVIDER);
       const errorContent = !installed
