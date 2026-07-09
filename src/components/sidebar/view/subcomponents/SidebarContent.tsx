@@ -218,6 +218,7 @@ export default function SidebarContent({
         isRefreshing={isRefreshing}
         onCreateProject={onCreateProject}
         onCollapseSidebar={onCollapseSidebar}
+        hideSearchTools={topTab === 'live'}
         t={t}
       />
 

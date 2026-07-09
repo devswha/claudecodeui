@@ -29,6 +29,7 @@ type SidebarHeaderProps = {
   isRefreshing: boolean;
   onCreateProject: () => void;
   onCollapseSidebar: () => void;
+  hideSearchTools?: boolean;
   t: TFunction;
 };
 
@@ -49,6 +50,7 @@ export default function SidebarHeader({
   isRefreshing,
   onCreateProject,
   onCollapseSidebar,
+  hideSearchTools = false,
   t,
 }: SidebarHeaderProps) {
   const showSearchTools = (projectsCount > 0 || runningSessionsCount > 0 || archivedSessionsCount > 0 || isArchivedSessionsLoading) && !isLoading;
@@ -136,7 +138,7 @@ export default function SidebarHeader({
         <GitHubStarBadge />
 
         {/* Search bar */}
-        {showSearchTools && (
+        {showSearchTools && !hideSearchTools && (
           <div className="mt-2.5 space-y-2">
             {/* Search mode toggle */}
             <div className="flex rounded-lg bg-muted/50 p-0.5">
@@ -277,7 +279,7 @@ export default function SidebarHeader({
         </div>
 
         {/* Mobile search */}
-        {showSearchTools && (
+        {showSearchTools && !hideSearchTools && (
           <div className="mt-2.5 space-y-2">
             <div className="flex rounded-lg bg-muted/50 p-0.5">
               <button
