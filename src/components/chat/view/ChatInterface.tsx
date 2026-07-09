@@ -240,6 +240,24 @@ function ChatInterface({
     });
   }, [selectedProject, selectedSession, sendMessage, sessionStore]);
 
+  // A live (tmux-driven) session grows from an EXTERNAL gjc process, so cloudcli
+  // gets no realtime WS push for it — the open read-only view would otherwise stay
+  // frozen until the user leaves and re-enters. While such a session is open, poll
+  // a bounded refresh (same reconcile as the reconnect/external path) so a relayed
+  // reply shows up in place. Ref keeps refreshFromServer out of the effect deps.
+  const refreshFromServerRef = useRef(sessionStore.refreshFromServer);
+  refreshFromServerRef.current = sessionStore.refreshFromServer;
+  const liveOpenSessionId = isSessionReadOnly ? (selectedSession?.id ?? null) : null;
+  useEffect(() => {
+    if (!liveOpenSessionId) {
+      return;
+    }
+    const timer = setInterval(() => {
+      void refreshFromServerRef.current(liveOpenSessionId);
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [liveOpenSessionId]);
+
   useChatRealtimeHandlers({
     subscribe,
     provider,
