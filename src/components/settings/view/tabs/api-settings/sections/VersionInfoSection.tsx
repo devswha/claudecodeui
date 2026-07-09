@@ -57,7 +57,7 @@ export default function VersionInfoSection({
                 className="text-sm font-semibold text-foreground"
                 style={{ fontFamily: CLOUDCLI_WORDMARK_FONT_FAMILY }}
               >
-                CloudCLI
+                가재코드
               </span>
               <a
                 href={releasesUrl}

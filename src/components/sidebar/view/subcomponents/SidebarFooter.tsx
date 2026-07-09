@@ -152,7 +152,7 @@ export default function SidebarFooter({
             rel="noopener noreferrer"
             className="text-[10px] text-muted-foreground/40 transition-colors hover:text-muted-foreground"
           >
-            CloudCLI v{currentVersion} – {t('branding.openSource')}
+            가재코드 v{currentVersion} – {t('branding.openSource')}
           </a>
         </div>
       )}

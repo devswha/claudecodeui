@@ -29,7 +29,7 @@
     --card-foreground: 36 25% 4%;
     --popover: 0 0% 100%;
     --popover-foreground: 36 25% 4%;
-    --primary: 221.2 83.2% 53.3%;
+    --primary: 173 80% 40%;
     --primary-foreground: 210 40% 98%;
     --secondary: 44 15% 91%;
     --secondary-foreground: 36 15% 18%;
@@ -41,7 +41,7 @@
     --destructive-foreground: 210 40% 98%;
     --border: 44 14% 87%;
     --input: 44 14% 87%;
-    --ring: 221.2 83.2% 53.3%;
+    --ring: 173 80% 40%;
     --radius: 0.5rem;
 
     /* Nav design tokens */
@@ -91,7 +91,7 @@
     --card-foreground: 40 8% 93%;
     --popover: 0 0% 12%;
     --popover-foreground: 40 8% 93%;
-    --primary: 217.2 91.2% 59.8%;
+    --primary: 172 66% 50%;
     --primary-foreground: 0 0% 8%;
     --secondary: 0 0% 17%;
     --secondary-foreground: 40 8% 93%;
@@ -103,7 +103,7 @@
     --destructive-foreground: 40 8% 93%;
     --border: 0 0% 17%;
     --input: 0 0% 23%;
-    --ring: 217.2 91.2% 59.8%;
+    --ring: 172 66% 50%;
 
     /* Nav design tokens — dark overrides */
     --nav-glass-bg: 0 0% 12% / 0.55;

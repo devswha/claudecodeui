@@ -5,13 +5,14 @@
   viewBox="0 0 32 32"
   fill="none"
 >
-  <rect width="32" height="32" rx="8" fill="hsl(221.2 83.2% 53.3%)"/>
-  <path
-    d="M8 9C8 8.44772 8.44772 8 9 8H23C23.5523 8 24 8.44772 24 9V18C24 18.5523 23.5523 19 23 19H12L8 23V9Z"
-    stroke="white"
-    strokeWidth="2"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-    fill="none"
-  />
+  <rect width="32" height="32" rx="8" fill="#14b8a6"/>
+  <text
+    x="16"
+    y="21.5"
+    text-anchor="middle"
+    font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+    font-size="12.5"
+    font-weight="700"
+    fill="#ffffff"
+  >gjc</text>
 </svg>
