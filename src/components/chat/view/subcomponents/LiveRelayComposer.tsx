@@ -58,13 +58,13 @@ export default function LiveRelayComposer({ tmuxName }: { tmuxName: string }) {
             value={input}
             onChange={(event) => setInput(event.target.value)}
             onKeyDown={(event) => {
-              if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+              if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
                 event.preventDefault();
                 void send();
               }
             }}
             rows={1}
-            placeholder={`${tmuxName}에 지시… (⌘/Ctrl+Enter 전송)`}
+            placeholder={`${tmuxName}에 지시… (Enter 전송, Shift+Enter 줄바꿈)`}
             className="max-h-40 min-h-9 flex-1 resize-none bg-transparent px-2 py-1.5 text-sm outline-none"
           />
           <button
