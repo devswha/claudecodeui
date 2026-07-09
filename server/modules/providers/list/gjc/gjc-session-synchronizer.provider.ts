@@ -61,6 +61,20 @@ export class GjcSessionSynchronizer implements IProviderSessionSynchronizer {
   private readonly provider = 'gjc' as const;
   private readonly gjcHome = path.join(os.homedir(), '.gjc', 'agent');
 
+  private readonly sessionsDir = path.join(os.homedir(), '.gjc', 'agent', 'sessions');
+
+  /**
+   * A top-level session is `sessions/<cwd-slug>/<ts>_<uuid>.jsonl`. Subagent
+   * transcripts (e.g. ralplan passes like `2-CriticPass1.jsonl`) live one level
+   * deeper inside the session's sidecar dir `sessions/<slug>/<ts>_<uuid>/*.jsonl`
+   * and relate to the parent session; indexing them as standalone sessions
+   * pollutes the sidebar (~5.5x). Only depth-2 files are real sessions.
+   */
+  private isSubagentTranscript(filePath: string): boolean {
+    const rel = path.relative(this.sessionsDir, filePath);
+    return rel.split(path.sep).length > 2;
+  }
+
   /**
    * Scans ~/.gjc/agent/sessions and upserts discovered sessions into DB.
    */
@@ -73,6 +87,9 @@ export class GjcSessionSynchronizer implements IProviderSessionSynchronizer {
 
     let processed = 0;
     for (const filePath of files) {
+      if (this.isSubagentTranscript(filePath)) {
+        continue;
+      }
       const parsed = await this.processSessionFile(filePath);
       if (!parsed) {
         continue;
@@ -112,6 +129,10 @@ export class GjcSessionSynchronizer implements IProviderSessionSynchronizer {
    */
   async synchronizeFile(filePath: string): Promise<string | null> {
     if (!filePath.endsWith('.jsonl')) {
+      return null;
+    }
+
+    if (this.isSubagentTranscript(filePath)) {
       return null;
     }
 

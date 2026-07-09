@@ -186,3 +186,37 @@ test('gjc sessions provider normalizes message content parts and folds tool resu
     await rm(tempRoot, { recursive: true, force: true });
   }
 });
+
+test('gjc synchronizer excludes subagent transcripts inside session sidecar dirs', { concurrency: false }, async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'gjc-subagent-'));
+  const workspacePath = path.join(tempRoot, 'workspace');
+  await mkdir(workspacePath, { recursive: true });
+  const restoreHomeDir = patchHomeDir(tempRoot);
+
+  try {
+    // Top-level session (depth 2: sessions/<slug>/<file>.jsonl).
+    await writeGjcTranscript(tempRoot, 'gjc-parent', workspacePath, { firstUserMessage: 'Parent session' });
+
+    // Subagent transcript inside the session's sidecar dir (depth 3) — e.g. a ralplan
+    // pass. It repeats the `type:session` header but must NOT be indexed as a session.
+    const sidecar = path.join(
+      tempRoot, '.gjc', 'agent', 'sessions', '-workspace', '2026-07-09T00-00-00_gjc-parent',
+    );
+    await mkdir(sidecar, { recursive: true });
+    const subLines = [
+      JSON.stringify({ type: 'session', version: 3, id: '2-CriticPass1', timestamp: '2026-07-09T00:00:00.000Z', cwd: workspacePath }),
+      JSON.stringify({ type: 'message', id: 'm', timestamp: '2026-07-09T00:00:01.000Z', message: { role: 'user', content: [{ type: 'text', text: 'subagent pass' }] } }),
+    ];
+    await writeFile(path.join(sidecar, '2-CriticPass1.jsonl'), `${subLines.join('\n')}\n`, 'utf8');
+
+    await withIsolatedDatabase(async () => {
+      const processed = await new GjcSessionSynchronizer().synchronize();
+      assert.equal(processed, 1); // only the top-level session, not the sidecar subagent
+      assert.ok(sessionsDb.getSessionById('gjc-parent'));
+      assert.ok(!sessionsDb.getSessionById('2-CriticPass1'));
+    });
+  } finally {
+    restoreHomeDir();
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
