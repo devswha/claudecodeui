@@ -43,21 +43,20 @@ jobs:
       - name: Configure branch server bundle source
         run: printf '{"releaseTag":"%s"}\n' "${{ steps.artifact.outputs.server_bundle_tag }}" > electron/server-bundle-config.json
 
-      - name: Verify signing secrets are configured
-        run: |
-          test -n "$CSC_LINK"
-          test -n "$CSC_KEY_PASSWORD"
-          test -n "$APPLE_ID"
-          test -n "$APPLE_APP_SPECIFIC_PASSWORD"
-          test -n "$APPLE_TEAM_ID"
+      - name: Check macOS signing secrets
+        id: macos-signing
         env:
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ -n "$CSC_LINK" ] && [ -n "$CSC_KEY_PASSWORD" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Build signed and notarized macOS artifacts
+        if: steps.macos-signing.outputs.enabled == 'true'
         run: npm run desktop:dist:mac -- --publish never
         env:
           CLOUDCLI_SEMANTICS_BUILD_REQUIRED: "1"
@@ -66,6 +65,14 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      # Unsigned fallback (D3): no Apple Developer account yet — mirrors desktop-release.yml.
+      - name: Build unsigned macOS artifacts
+        if: steps.macos-signing.outputs.enabled != 'true'
+        run: npm run desktop:dist:mac -- --publish never
+        env:
+          CLOUDCLI_SEMANTICS_BUILD_REQUIRED: "1"
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
 
       - name: Build branch server bundle
         run: node scripts/release/build-server-bundle.js
