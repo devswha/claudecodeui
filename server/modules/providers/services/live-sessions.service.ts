@@ -1,61 +1,109 @@
 import { spawn } from 'node:child_process';
+import { realpath } from 'node:fs/promises';
 
 /**
- * Live gjc session detection.
+ * Live gjc session detection + tmux-session naming.
  *
- * A gjc session is "live" when a running gjc process has its transcript file
- * (`…/.gjc/agent/sessions/<slug>/<ts>_<uuid>.jsonl`) open. We detect that with:
- *   - lsof on gjc processes → the session ids (uuid from the filename) held open
- *   - tmux `list-panes`     → a presence gate; with no tmux server we return []
+ * A gjc session is "live" when a running gjc process has its transcript file open.
+ * For the "작동 중" fleet view we also map each live session id → the tmux session
+ * NAME it runs in (omg / stock / flask / …), via cwd:
+ *   - lsof (-c gjc -F pn) → {session-id uuid, holder pid} for open session files
+ *   - /proc/<pid>/cwd     → the gjc process's working dir (realpath)
+ *   - tmux list-panes     → {session_name, pane cwd (realpath)}
+ *   - match holder cwd to a pane cwd → the tmux session name
  *
- * Matching is PATH-AGNOSTIC (by session-id uuid), deliberately NOT by home-derived
- * path prefixes: production cloudcli runs under a decoy HOME whose `.gjc` is a
- * SYMLINK to the real `~/.gjc`, and lsof reports the resolved real path. Comparing
- * home-derived slugs (using this process's HOME) therefore never matched. The uuid
- * is stable regardless of which path (symlink or real) lsof reports.
- *
- * All tmux/lsof shell dependence is ISOLATED here and fails closed to [].
+ * Matching is PATH-AGNOSTIC (uuid + realpath'd cwds), so production cloudcli's
+ * decoy HOME (whose `.gjc` is a symlink) does not break it. tmux/lsof/proc access
+ * is ISOLATED here and fails closed to [] (or tmuxName:null on a miss — the UI
+ * falls back to the conversation title).
  */
 
 const SESSIONS_SEGMENT = '.gjc/agent/sessions';
-
-// Matches `…/.gjc/agent/sessions/<slug>/<ts>_<uuid>.jsonl` → captures the uuid.
-// Works for both the real path and a symlinked (decoy-HOME) path.
 const SESSION_FILE_RE = /\.gjc\/agent\/sessions\/[^/]+\/[^/]*_([0-9a-fA-F][0-9a-fA-F-]{7,})\.jsonl\b/;
+const TMUX_FIELD_SEP = '\t';
+
+export type LiveGjcSession = { id: string; tmuxName: string | null };
 
 /** True when `tmux list-panes` reported at least one pane (a tmux server is up). */
 export function tmuxHasPanes(output: string): boolean {
   return output.split(/\r?\n/).some((line) => line.trim().length > 0);
 }
 
-/** Extracts unique gjc session ids (uuids) from lsof output, path-agnostic. */
-export function parseLsofSessionIds(output: string): string[] {
-  const ids = new Set<string>();
+/** Parses `#{session_name}\t#{pane_current_path}` lines into {name, cwd}. */
+export function parseTmuxPanes(output: string): Array<{ name: string; cwd: string }> {
+  const panes: Array<{ name: string; cwd: string }> = [];
   for (const raw of output.split(/\r?\n/)) {
-    if (!raw.includes(SESSIONS_SEGMENT)) {
+    if (!raw.trim()) {
       continue;
     }
-    const match = SESSION_FILE_RE.exec(raw);
-    if (match) {
-      ids.add(match[1]);
+    const sep = raw.indexOf(TMUX_FIELD_SEP);
+    if (sep < 0) {
+      continue;
+    }
+    const name = raw.slice(0, sep).trim();
+    const cwd = raw.slice(sep + 1).trim();
+    if (name && cwd) {
+      panes.push({ name, cwd });
     }
   }
-  return [...ids];
+  return panes;
+}
+
+/** Parses `lsof -F pn` output into {session-id, holder pid} pairs (path-agnostic). */
+export function parseLsofPidSessions(output: string): Array<{ id: string; pid: number }> {
+  const out: Array<{ id: string; pid: number }> = [];
+  const seen = new Set<string>();
+  let pid: number | null = null;
+  for (const raw of output.split(/\r?\n/)) {
+    if (raw.startsWith('p')) {
+      const parsed = Number.parseInt(raw.slice(1), 10);
+      pid = Number.isFinite(parsed) ? parsed : null;
+      continue;
+    }
+    if (raw.startsWith('n') && raw.includes(SESSIONS_SEGMENT) && pid != null) {
+      const match = SESSION_FILE_RE.exec(raw);
+      if (match) {
+        const key = `${pid}:${match[1]}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          out.push({ id: match[1], pid });
+        }
+      }
+    }
+  }
+  return out;
 }
 
 /**
- * Live ids = gjc-held session ids, gated on tmux being present. Pure, so it is
- * unit-testable (including the symlinked-path / decoy-HOME regression) without
- * spawning anything.
+ * Pure match: live sessions (with resolved cwd) → tmux session name. Deduped by
+ * session id, preferring a named match. tmuxName is null when no pane cwd matches
+ * (or tmux is absent → empty list). Unit-testable without spawning.
  */
-export function computeLiveSessionIds(args: { tmuxPresent: boolean; lsofSessionIds: string[] }): string[] {
+export function computeLiveSessions(args: {
+  tmuxPresent: boolean;
+  panes: Array<{ name: string; cwd: string }>;
+  sessions: Array<{ id: string; cwd: string | null }>;
+}): LiveGjcSession[] {
   if (!args.tmuxPresent) {
     return [];
   }
-  return [...new Set(args.lsofSessionIds)];
+  const nameByCwd = new Map<string, string>();
+  for (const pane of args.panes) {
+    if (!nameByCwd.has(pane.cwd)) {
+      nameByCwd.set(pane.cwd, pane.name);
+    }
+  }
+  const byId = new Map<string, string | null>();
+  for (const session of args.sessions) {
+    const name = session.cwd ? nameByCwd.get(session.cwd) ?? null : null;
+    const existing = byId.get(session.id);
+    if (existing === undefined || (existing === null && name !== null)) {
+      byId.set(session.id, name);
+    }
+  }
+  return [...byId].map(([id, tmuxName]) => ({ id, tmuxName }));
 }
 
-/** Runs a command, resolving trimmed stdout. Rejects on spawn error / timeout. */
 function runCommand(command: string, cmdArgs: string[], timeoutMs = 4000): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, cmdArgs, { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
@@ -78,28 +126,48 @@ function runCommand(command: string, cmdArgs: string[], timeoutMs = 4000): Promi
   });
 }
 
+async function safeRealpath(target: string): Promise<string | null> {
+  try {
+    return await realpath(target);
+  } catch {
+    return null;
+  }
+}
+
 /**
- * Returns the gjc session ids currently live. Empty on any failure (no tmux, no
- * lsof, spawn error) — tmux/lsof dependence is confined to this function.
+ * Returns live gjc sessions with their tmux session name. Empty on any failure
+ * (no tmux/lsof, spawn error) — tmux/lsof/proc dependence is confined here.
  */
-export async function getLiveGjcSessionIds(): Promise<string[]> {
+export async function getLiveGjcSessions(): Promise<LiveGjcSession[]> {
   let tmuxOutput: string;
   try {
-    tmuxOutput = await runCommand('tmux', ['list-panes', '-a', '-F', '#{pane_current_path}']);
+    tmuxOutput = await runCommand('tmux', ['list-panes', '-a', '-F', `#{session_name}${TMUX_FIELD_SEP}#{pane_current_path}`]);
   } catch {
-    return []; // tmux absent / no server → graceful degradation
+    return [];
   }
   if (!tmuxHasPanes(tmuxOutput)) {
     return [];
   }
+  const panes: Array<{ name: string; cwd: string }> = [];
+  for (const pane of parseTmuxPanes(tmuxOutput)) {
+    panes.push({ name: pane.name, cwd: (await safeRealpath(pane.cwd)) ?? pane.cwd });
+  }
 
   let lsofOutput: string;
   try {
-    // -c gjc: files opened by processes whose command is `gjc`; -F n: names only.
-    lsofOutput = await runCommand('lsof', ['-c', 'gjc', '-F', 'n']);
+    lsofOutput = await runCommand('lsof', ['-c', 'gjc', '-F', 'pn']);
   } catch {
     return [];
   }
+  const sessions: Array<{ id: string; cwd: string | null }> = [];
+  for (const { id, pid } of parseLsofPidSessions(lsofOutput)) {
+    sessions.push({ id, cwd: await safeRealpath(`/proc/${pid}/cwd`) });
+  }
 
-  return computeLiveSessionIds({ tmuxPresent: true, lsofSessionIds: parseLsofSessionIds(lsofOutput) });
+  return computeLiveSessions({ tmuxPresent: true, panes, sessions });
+}
+
+/** Backward-compatible id-only view. */
+export async function getLiveGjcSessionIds(): Promise<string[]> {
+  return (await getLiveGjcSessions()).map((session) => session.id);
 }

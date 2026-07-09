@@ -7,7 +7,7 @@ import { providerModelsService } from '@/modules/providers/services/provider-mod
 import { providerSkillsService } from '@/modules/providers/services/skills.service.js';
 import { sessionConversationsSearchService } from '@/modules/providers/services/session-conversations-search.service.js';
 import { sessionsService } from '@/modules/providers/services/sessions.service.js';
-import { getLiveGjcSessionIds } from '@/modules/providers/services/live-sessions.service.js';
+import { getLiveGjcSessions } from '@/modules/providers/services/live-sessions.service.js';
 import type {
   LLMProvider,
   McpScope,
@@ -561,9 +561,13 @@ router.get(
 router.get(
   '/sessions/live',
   asyncHandler(async (_req: Request, res: Response) => {
-    // Session ids currently live in a tmux gjc pane (tmux+lsof; empty if no tmux).
-    const liveSessionIds = await getLiveGjcSessionIds();
-    res.json(createApiSuccessResponse({ liveSessionIds }));
+    // Sessions live in a tmux gjc pane, each with its tmux session name (tmux+lsof;
+    // empty if no tmux). liveSessionIds kept for backward compatibility.
+    const liveSessions = await getLiveGjcSessions();
+    res.json(createApiSuccessResponse({
+      liveSessions,
+      liveSessionIds: liveSessions.map((session) => session.id),
+    }));
   }),
 );
 
