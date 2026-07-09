@@ -151,6 +151,21 @@ function addCandidateUrl(urls, rawUrl) {
   }
 }
 
+// Normalizes the user-configured remote server URL setting: keep only valid
+// http(s) URLs (trimmed, no trailing slash); anything else becomes '' (local mode).
+function normalizeRemoteServerUrl(rawUrl) {
+  if (typeof rawUrl !== 'string' || !rawUrl.trim()) return '';
+  try {
+    const parsed = new URL(rawUrl.trim());
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return '';
+    parsed.hash = '';
+    parsed.search = '';
+    return stripTrailingSlash(parsed.toString());
+  } catch {
+    return '';
+  }
+}
+
 function addCandidatePort(urls, rawPort) {
   const port = Number.parseInt(String(rawPort || ''), 10);
   if (!Number.isInteger(port) || port < 1 || port > 65535) return;
@@ -223,8 +238,13 @@ async function readServerMarkerUrl() {
   }
 }
 
-async function getExistingServerCandidateUrls(defaultUrl) {
+async function getExistingServerCandidateUrls(defaultUrl, remoteServerUrl) {
   const urls = [];
+
+  // Explicit user-configured remote server (e.g. a Linux box over Tailscale) wins:
+  // the desktop app then attaches instead of spawning a local server, so Windows
+  // machines without gjc still get the full session/terminal experience remotely.
+  addCandidateUrl(urls, remoteServerUrl);
 
   for (const key of LOCAL_SERVER_URL_ENV_KEYS) {
     addCandidateUrl(urls, process.env[key]);
@@ -267,6 +287,7 @@ export class LocalServerController {
     this.desktopSettings = {
       keepLocalServerRunning: false,
       exposeLocalServerOnNetwork: false,
+      remoteServerUrl: '',
       themeMode: 'system',
     };
   }
@@ -341,12 +362,14 @@ export class LocalServerController {
       this.desktopSettings = {
         keepLocalServerRunning: Boolean(stored.keepLocalServerRunning),
         exposeLocalServerOnNetwork: Boolean(stored.exposeLocalServerOnNetwork),
+        remoteServerUrl: normalizeRemoteServerUrl(stored.remoteServerUrl),
         themeMode: stored.themeMode === 'light' || stored.themeMode === 'dark' ? stored.themeMode : 'system',
       };
     } catch {
       this.desktopSettings = {
         keepLocalServerRunning: false,
         exposeLocalServerOnNetwork: false,
+        remoteServerUrl: '',
         themeMode: 'system',
       };
     }
@@ -356,6 +379,7 @@ export class LocalServerController {
     this.desktopSettings = {
       keepLocalServerRunning: Boolean(nextSettings.keepLocalServerRunning),
       exposeLocalServerOnNetwork: Boolean(nextSettings.exposeLocalServerOnNetwork),
+      remoteServerUrl: normalizeRemoteServerUrl(nextSettings.remoteServerUrl),
       themeMode: nextSettings.themeMode === 'light' || nextSettings.themeMode === 'dark' ? nextSettings.themeMode : 'system',
     };
     await fs.mkdir(path.dirname(this.settingsPath), { recursive: true });
@@ -368,14 +392,15 @@ export class LocalServerController {
       throw new Error(`Unknown desktop setting: ${key}`);
     }
 
-    const wasExposeSetting = key === 'exposeLocalServerOnNetwork';
+    const isServerConnectivitySetting = key === 'exposeLocalServerOnNetwork' || key === 'remoteServerUrl';
     const wasLocalRunning = Boolean(this.localServerUrl);
-    const nextValue = key === 'themeMode' ? value : Boolean(value);
+    const changed = this.desktopSettings[key] !== value;
+    const nextValue = key === 'themeMode' || key === 'remoteServerUrl' ? value : Boolean(value);
     await this.saveDesktopSettings({ ...this.desktopSettings, [key]: nextValue });
 
     return {
       desktopSettings: this.desktopSettings,
-      requiresRestartNotice: wasExposeSetting && wasLocalRunning,
+      requiresRestartNotice: isServerConnectivitySetting && wasLocalRunning && changed,
     };
   }
 
@@ -470,7 +495,7 @@ export class LocalServerController {
     }
 
     if (!forceOwnServer) {
-      const candidateUrls = await getExistingServerCandidateUrls(defaultUrl);
+      const candidateUrls = await getExistingServerCandidateUrls(defaultUrl, this.desktopSettings.remoteServerUrl);
       for (const candidateUrl of candidateUrls) {
         if (await isCloudCliServer(candidateUrl)) {
           const displayUrl = getDisplayUrl(candidateUrl);

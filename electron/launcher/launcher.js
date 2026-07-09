@@ -447,7 +447,8 @@ window.__MOCK_STATE__ = {
     if (options.includePreferences) {
       body +=
         '<label class="cc-toggle"><input type="checkbox" data-cc-setting="keepLocalServerRunning"' + (settings.keepLocalServerRunning ? ' checked' : '') + '><span><b>Keep server running</b><br>Leave Local CloudCLI available after you quit the app.</span></label>' +
-        '<label class="cc-toggle"><input type="checkbox" data-cc-setting="exposeLocalServerOnNetwork"' + (settings.exposeLocalServerOnNetwork ? ' checked' : '') + '><span><b>Allow LAN access</b><br>Use the copied URL from another device on this network.</span></label>';
+        '<label class="cc-toggle"><input type="checkbox" data-cc-setting="exposeLocalServerOnNetwork"' + (settings.exposeLocalServerOnNetwork ? ' checked' : '') + '><span><b>Allow LAN access</b><br>Use the copied URL from another device on this network.</span></label>' +
+        CC.renderRemoteServerField(settings);
     }
     body += '</div>';
     return CC.renderSection(
@@ -455,6 +456,20 @@ window.__MOCK_STATE__ = {
       options.title || 'Run Local CloudCLI on this machine',
       body
     );
+  };
+
+  // Remote server URL field: attach the desktop app to a GajaeCode/CloudCLI server on
+  // another machine (e.g. your Linux workstation over Tailscale/SSH tunnel) instead of
+  // running a local server. Empty = local mode. Applied on next app start.
+  CC.renderRemoteServerField = function (settings) {
+    return '' +
+      '<label class="cc-toggle" style="align-items:flex-start"><span style="flex:1"><b>Remote server URL</b><br>' +
+      'Attach to a server on another machine (e.g. http://100.x.y.z:3021 over Tailscale, or a local end of an SSH tunnel). ' +
+      'Leave empty to run locally. Applies on next app start.' +
+      '<input type="text" data-cc-setting="remoteServerUrl" value="' + esc(settings.remoteServerUrl || '') + '" ' +
+      'placeholder="http://100.x.y.z:3021" spellcheck="false" ' +
+      'style="display:block;width:100%;margin-top:6px;padding:6px 8px;border:1px solid var(--cc-border,#444);border-radius:8px;background:transparent;color:inherit;font-family:inherit">' +
+      '</span></label>';
   };
 
   CC.buildThemeSection = function (state) {
@@ -476,6 +491,7 @@ window.__MOCK_STATE__ = {
         '<div class="cc-surface">' +
         '<label class="cc-toggle"><input type="checkbox" data-cc-setting="keepLocalServerRunning"' + ((state.desktopSettings || {}).keepLocalServerRunning ? ' checked' : '') + '><span><b>Keep server running</b><br>Leave Local CloudCLI available after you quit the app.</span></label>' +
         '<label class="cc-toggle"><input type="checkbox" data-cc-setting="exposeLocalServerOnNetwork"' + ((state.desktopSettings || {}).exposeLocalServerOnNetwork ? ' checked' : '') + '><span><b>Allow LAN access</b><br>Use the copied URL from another device on this network.</span></label>' +
+        CC.renderRemoteServerField(state.desktopSettings || {}) +
         '</div>'
       ),
     ];
@@ -539,7 +555,7 @@ window.__MOCK_STATE__ = {
       if (setting) {
         CC.act('set-setting', {
           key: setting.getAttribute('data-cc-setting'),
-          value: setting.checked,
+          value: setting.type === 'checkbox' ? setting.checked : setting.value,
         });
         return;
       }
