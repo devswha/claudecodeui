@@ -42,6 +42,7 @@ export type MainContentProps = {
   selectedProject: Project | null;
   selectedSession: ProjectSession | null;
   isSessionReadOnly: boolean;
+  liveSessionTmuxName: string | null;
   activeTab: AppTab;
   setActiveTab: Dispatch<SetStateAction<AppTab>>;
   ws: WebSocket | null;

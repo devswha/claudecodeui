@@ -68,6 +68,12 @@ export const api = {
   archivedProjects: () => authenticatedFetch('/api/projects/archived'),
   // Session ids currently live in a tmux gjc pane (tmux+lsof; [] when no tmux).
   liveSessions: () => authenticatedFetch('/api/providers/sessions/live'),
+  // Relay a message into a live tmux gjc session via the control tower (POST /send).
+  liveSessionSend: (tmuxName, message) =>
+    authenticatedFetch('/api/providers/sessions/live/send', {
+      method: 'POST',
+      body: JSON.stringify({ tmuxName, message }),
+    }),
   projectSessions: (projectId, { limit = 20, offset = 0 } = {}) => {
     const params = new URLSearchParams();
     params.set('limit', String(limit));

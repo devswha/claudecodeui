@@ -121,6 +121,7 @@ export interface ChatInterfaceProps {
   selectedProject: Project | null;
   selectedSession: ProjectSession | null;
   isSessionReadOnly: boolean;
+  liveSessionTmuxName: string | null;
   ws: WebSocket | null;
   sendMessage: (message: unknown) => void;
   onFileOpen?: (filePath: string, diffInfo?: any) => void;
