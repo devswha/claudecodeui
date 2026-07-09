@@ -74,6 +74,7 @@ function buildDesktopPackageJson(copiedOptionalDependencies) {
     license: packageJson.license,
     type: 'module',
     main: 'electron/main.js',
+    homepage: packageJson.homepage || 'https://gjc.vibetip.help',
     dependencies: {
       ws: packageJson.dependencies.ws,
     },
@@ -83,6 +84,7 @@ function buildDesktopPackageJson(copiedOptionalDependencies) {
       productName: packageJson.build.productName,
       asar: packageJson.build.asar,
       artifactName: packageJson.build.artifactName,
+      executableName: packageJson.build.executableName,
       electronVersion: getElectronVersion(),
       directories: {
         output: '../../release/desktop',
@@ -102,6 +104,7 @@ function buildDesktopPackageJson(copiedOptionalDependencies) {
       mac: packageJson.build.mac,
       win: packageJson.build.win,
       nsis: packageJson.build.nsis,
+      linux: packageJson.build.linux,
     },
   };
 }

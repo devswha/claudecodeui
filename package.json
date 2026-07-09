@@ -1,7 +1,7 @@
 {
   "name": "@cloudcli-ai/cloudcli",
   "version": "1.36.1",
-  "productName": "CloudCLI",
+  "productName": "GajaeCode",
   "description": "A web-based UI for Claude Code CLI",
   "type": "module",
   "main": "dist-server/server/index.js",
@@ -38,6 +38,7 @@
     "desktop:pack": "npm run build && npm run desktop:stage && electron-builder --projectDir .desktop-build/desktop-app --dir",
     "desktop:dist:mac": "npm run build && npm run desktop:stage && electron-builder --projectDir .desktop-build/desktop-app --mac dmg",
     "desktop:dist:win": "npm run build && npm run desktop:stage && electron-builder --projectDir .desktop-build/desktop-app --win nsis",
+    "desktop:dist:linux": "npm run build && npm run desktop:stage && electron-builder --projectDir .desktop-build/desktop-app --linux",
     "server:bundle": "npm run build && node scripts/release/build-server-bundle.js",
     "desktop:icon:mac": "node electron/scripts/generate-macos-icon.js",
     "build": "npm run build:client && npm run build:server",
@@ -56,10 +57,11 @@
     "update:platform": "./update-platform.sh"
   },
   "build": {
-    "appId": "ai.cloudcli.desktop",
-    "productName": "CloudCLI",
+    "appId": "help.vibetip.gjc.desktop",
+    "productName": "GajaeCode",
     "asar": false,
-    "artifactName": "cloudcli-desktop-${version}-${os}-${arch}.${ext}",
+    "executableName": "gajaecode",
+    "artifactName": "gajaecode-desktop-${version}-${os}-${arch}.${ext}",
     "directories": {
       "output": "release/desktop"
     },
@@ -86,17 +88,17 @@
     ],
     "mac": {
       "category": "public.app-category.developer-tools",
-      "icon": "electron/assets/logo-macos.icns",
-      "notarize": true,
+      "icon": "public/icons/icon-512x512.png",
+      "notarize": false,
       "target": [
         "dmg"
       ],
       "extendInfo": {
-        "CFBundleName": "CloudCLI",
-        "CFBundleDisplayName": "CloudCLI",
+        "CFBundleName": "GajaeCode",
+        "CFBundleDisplayName": "가재코드",
         "CFBundleURLTypes": [
           {
-            "CFBundleURLName": "CloudCLI",
+            "CFBundleURLName": "GajaeCode",
             "CFBundleURLSchemes": [
               "cloudcli"
             ]
@@ -105,14 +107,20 @@
       }
     },
     "win": {
-      "icon": "electron/assets/logo-windows.ico",
+      "icon": "public/icons/icon-512x512.png",
       "target": [
         "nsis"
       ]
     },
-    "nsis": {
-      "installerIcon": "electron/assets/logo-windows.ico",
-      "uninstallerIcon": "electron/assets/logo-windows.ico"
+    "linux": {
+      "icon": "public/icons/icon-512x512.png",
+      "category": "Development",
+      "maintainer": "devswha <devswha@gmail.com>",
+      "synopsis": "가재코드(Gajae Code) desktop app",
+      "target": [
+        "AppImage",
+        "deb"
+      ]
     }
   },
   "keywords": [

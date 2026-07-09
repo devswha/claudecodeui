@@ -98,9 +98,17 @@ async function chooseServerPort(host) {
 
 function getDesktopPath() {
   const currentPath = process.env.PATH || '';
+  const home = os.homedir();
+  // GUI-launched apps inherit a minimal PATH (especially on macOS), which misses
+  // per-user tool dirs. gjc typically lives in ~/.local/bin (or ~/.bun/bin), and the
+  // embedded server spawns it via PATH — so augment with the common per-user dirs too.
   const commonPaths = process.platform === 'win32'
     ? []
-    : ['/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin', '/usr/sbin', '/sbin'];
+    : [
+        path.join(home, '.local', 'bin'),
+        path.join(home, '.bun', 'bin'),
+        '/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin', '/usr/sbin', '/sbin',
+      ];
 
   return [...commonPaths, currentPath].filter(Boolean).join(path.delimiter);
 }

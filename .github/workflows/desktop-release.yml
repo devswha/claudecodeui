@@ -45,7 +45,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
   build-macos:
-    name: Build signed macOS desktop app
+    name: Build macOS desktop app (signed when secrets exist)
     needs: resolve-release
     runs-on: macos-latest
     permissions:
@@ -74,21 +74,20 @@ jobs:
           SERVER_BUNDLE_TAG: ${{ needs.resolve-release.outputs.server_bundle_tag }}
         run: printf '{"releaseTag":"%s"}\n' "$SERVER_BUNDLE_TAG" > electron/server-bundle-config.json
 
-      - name: Verify macOS signing secrets are configured
-        run: |
-          test -n "$CSC_LINK"
-          test -n "$CSC_KEY_PASSWORD"
-          test -n "$APPLE_ID"
-          test -n "$APPLE_APP_SPECIFIC_PASSWORD"
-          test -n "$APPLE_TEAM_ID"
+      - name: Check macOS signing secrets
+        id: macos-signing
         env:
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ -n "$CSC_LINK" ] && [ -n "$CSC_KEY_PASSWORD" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
 
-      - name: Build signed and notarized macOS artifacts
+      - name: Build signed macOS artifacts
+        if: steps.macos-signing.outputs.enabled == 'true'
         run: npm run desktop:dist:mac -- --publish never
         env:
           CLOUDCLI_SEMANTICS_BUILD_REQUIRED: "1"
@@ -97,6 +96,15 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      # Unsigned fallback (D3): no Apple Developer account yet. Users get the
+      # right-click-Open / xattr guidance on the download page instead.
+      - name: Build unsigned macOS artifacts
+        if: steps.macos-signing.outputs.enabled != 'true'
+        run: npm run desktop:dist:mac -- --publish never
+        env:
+          CLOUDCLI_SEMANTICS_BUILD_REQUIRED: "1"
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
 
       - name: Build macOS local server bundle
         run: node scripts/release/build-server-bundle.js
@@ -216,12 +224,77 @@ jobs:
           path: server-release-assets/*
           if-no-files-found: error
 
+  build-linux:
+    name: Build Linux desktop app
+    needs: resolve-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Configure release server bundle source
+        env:
+          SERVER_BUNDLE_TAG: ${{ needs.resolve-release.outputs.server_bundle_tag }}
+        run: printf '{"releaseTag":"%s"}\n' "$SERVER_BUNDLE_TAG" > electron/server-bundle-config.json
+
+      - name: Build Linux artifacts
+        run: npm run desktop:dist:linux -- --publish never
+        env:
+          CLOUDCLI_SEMANTICS_BUILD_REQUIRED: "1"
+
+      - name: Build Linux local server bundle
+        run: node scripts/release/build-server-bundle.js
+
+      - name: Stage Linux release assets
+        run: |
+          mkdir -p desktop-release-assets server-release-assets
+          test -n "$(find release/desktop -maxdepth 1 -name '*.AppImage' -print -quit)"
+          test -n "$(find release/desktop -maxdepth 1 -name '*.deb' -print -quit)"
+          sha256sum release/desktop/*.AppImage release/desktop/*.deb > desktop-release-assets/SHASUMS256-linux.txt
+          cp release/desktop/*.AppImage release/desktop/*.deb desktop-release-assets/
+
+          test -n "$(find release/local-server -maxdepth 1 -name 'cloudcli-local-server-*.tar.gz' -print -quit)"
+          test -n "$(find release/local-server -maxdepth 1 -name 'cloudcli-local-server-*.tar.gz.sha256' -print -quit)"
+          cp release/local-server/* server-release-assets/
+
+      - name: Upload Linux desktop assets
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: desktop-release-linux
+          path: desktop-release-assets/*
+          if-no-files-found: error
+
+      - name: Upload Linux server assets
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: server-release-linux
+          path: server-release-assets/*
+          if-no-files-found: error
+
   publish:
     name: Publish desktop release
     needs:
       - resolve-release
       - build-macos
       - build-windows
+      - build-linux
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -244,8 +317,11 @@ jobs:
         run: |
           test -n "$(find release/desktop -maxdepth 1 -name '*.dmg' -print -quit)"
           test -n "$(find release/desktop -maxdepth 1 -name '*.exe' -print -quit)"
+          test -n "$(find release/desktop -maxdepth 1 -name '*.AppImage' -print -quit)"
+          test -n "$(find release/desktop -maxdepth 1 -name '*.deb' -print -quit)"
           test -f release/desktop/SHASUMS256-macos.txt
           test -f release/desktop/SHASUMS256-windows.txt
+          test -f release/desktop/SHASUMS256-linux.txt
           test -n "$(find release/local-server -maxdepth 1 -name 'cloudcli-local-server-*.tar.gz' -print -quit)"
           test -n "$(find release/local-server -maxdepth 1 -name 'cloudcli-local-server-*.tar.gz.sha256' -print -quit)"
           find release -maxdepth 2 -type f -print | sort
