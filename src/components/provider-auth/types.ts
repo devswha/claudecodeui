@@ -17,6 +17,7 @@ export const PROVIDER_AUTH_STATUS_ENDPOINTS: Record<LLMProvider, string> = {
   cursor: '/api/providers/cursor/auth/status',
   codex: '/api/providers/codex/auth/status',
   opencode: '/api/providers/opencode/auth/status',
+  gjc: '/api/providers/gjc/auth/status',
 };
 
 export const createInitialProviderAuthStatusMap = (loading = true): ProviderAuthStatusMap => ({
@@ -24,4 +25,5 @@ export const createInitialProviderAuthStatusMap = (loading = true): ProviderAuth
   cursor: { authenticated: false, email: null, method: null, error: null, loading },
   codex: { authenticated: false, email: null, method: null, error: null, loading },
   opencode: { authenticated: false, email: null, method: null, error: null, loading },
+  gjc: { authenticated: false, email: null, method: null, error: null, loading },
 });
