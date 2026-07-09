@@ -15,8 +15,10 @@ export default {
     },
     extend: {
       fontFamily: {
-        sans: ['"Encode Sans"', '-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'Roboto', '"Helvetica Neue"', 'Arial', 'sans-serif'],
-        serif: ['Merriweather', 'Georgia', 'Cambria', '"Times New Roman"', 'serif'],
+        sans: ['"Pretendard Variable"', 'Pretendard', '"Encode Sans"', '-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'Roboto', '"Helvetica Neue"', 'Arial', 'sans-serif'],
+        // Latin keeps its serif faces; Korean (no serif glyph in them) falls through
+        // to Pretendard instead of the ugly system serif (궁서체).
+        serif: ['Merriweather', 'Georgia', 'Cambria', '"Times New Roman"', '"Pretendard Variable"', 'Pretendard', 'serif'],
       },
       colors: {
         border: "hsl(var(--border))",
