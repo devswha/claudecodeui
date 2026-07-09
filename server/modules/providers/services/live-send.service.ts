@@ -1,0 +1,55 @@
+/**
+ * Relays a message from the app into a live tmux gjc session via the control
+ * tower's send endpoint — the app never injects into the conversation directly.
+ * The tower owns outbox/queueing, paste injection, and send verification; we only
+ * proxy `POST {TOWER_URL}/send` (form: session=<tmux name>&msg=<text>).
+ *
+ * Tower dependence is ISOLATED here. If the tower is unreachable the caller gets
+ * `{ ok: false, reachable: false }` so the UI can degrade gracefully.
+ */
+
+const DEFAULT_TOWER_URL = 'http://127.0.0.1:3019';
+
+export function towerUrl(): string {
+  return process.env.TOWER_URL || DEFAULT_TOWER_URL;
+}
+
+// tmux session names are simple tokens; reject anything that could be an argv/shell
+// surprise before it reaches the tower (the tower validates too — defence in depth).
+const TMUX_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+
+export function isValidTmuxName(name: unknown): name is string {
+  return typeof name === 'string' && TMUX_NAME_RE.test(name);
+}
+
+export type LiveSendResult = { ok: boolean; reachable: boolean; queued: boolean; detail: string };
+
+/** Pure classifier for the tower's response (queued vs delivered vs failure). */
+export function classifyTowerResponse(status: number, body: string): LiveSendResult {
+  const detail = body.trim().slice(0, 500);
+  const ok = status >= 200 && status < 300;
+  return {
+    ok,
+    reachable: true,
+    queued: ok && /queue|queued|대기/i.test(detail),
+    detail,
+  };
+}
+
+/** Proxies one message to the tower's /send. Never throws — returns a result. */
+export async function sendToLiveSession(tmuxName: string, message: string): Promise<LiveSendResult> {
+  const body = new URLSearchParams({ session: tmuxName, msg: message });
+  let response: Response;
+  try {
+    response = await fetch(`${towerUrl()}/send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body,
+      signal: AbortSignal.timeout(6000),
+    });
+  } catch {
+    return { ok: false, reachable: false, queued: false, detail: 'control tower is not reachable' };
+  }
+  const text = await response.text().catch(() => '');
+  return classifyTowerResponse(response.status, text);
+}

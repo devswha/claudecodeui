@@ -8,6 +8,7 @@ import { providerSkillsService } from '@/modules/providers/services/skills.servi
 import { sessionConversationsSearchService } from '@/modules/providers/services/session-conversations-search.service.js';
 import { sessionsService } from '@/modules/providers/services/sessions.service.js';
 import { getLiveGjcSessions } from '@/modules/providers/services/live-sessions.service.js';
+import { isValidTmuxName, sendToLiveSession } from '@/modules/providers/services/live-send.service.js';
 import type {
   LLMProvider,
   McpScope,
@@ -568,6 +569,23 @@ router.get(
       liveSessions,
       liveSessionIds: liveSessions.map((session) => session.id),
     }));
+  }),
+);
+
+router.post(
+  '/sessions/live/send',
+  asyncHandler(async (req: Request, res: Response) => {
+    // Relay a message into a live tmux gjc session via the control tower's /send.
+    const body = (req.body ?? {}) as { tmuxName?: unknown; message?: unknown };
+    if (!isValidTmuxName(body.tmuxName)) {
+      throw new AppError('A valid tmuxName is required.', { code: 'INVALID_TMUX_NAME', statusCode: 400 });
+    }
+    const message = typeof body.message === 'string' ? body.message : '';
+    if (!message.trim()) {
+      throw new AppError('message is required.', { code: 'EMPTY_MESSAGE', statusCode: 400 });
+    }
+    const result = await sendToLiveSession(body.tmuxName, message);
+    res.json(createApiSuccessResponse(result));
   }),
 );
 
