@@ -220,3 +220,34 @@ test('gjc synchronizer excludes subagent transcripts inside session sidecar dirs
     await rm(tempRoot, { recursive: true, force: true });
   }
 });
+
+test('gjc synchronizer streams past leading non-user lines to the first user message', { concurrency: false }, async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'gjc-session-sync-'));
+  const workspacePath = path.join(tempRoot, 'workspace');
+  await mkdir(workspacePath, { recursive: true });
+  const restoreHomeDir = patchHomeDir(tempRoot);
+
+  try {
+    const sessionsDir = path.join(tempRoot, '.gjc', 'agent', 'sessions', '-workspace');
+    await mkdir(sessionsDir, { recursive: true });
+    // Real gjc transcripts open with the session header and a display:false custom
+    // "volatile-project-context" message BEFORE the first user message. The streaming
+    // title reader must skip both and stop at the user message.
+    const lines = [
+      JSON.stringify({ type: 'session', version: 3, id: 'gjc-stream', timestamp: '2026-07-09T00:00:00.000Z', cwd: workspacePath }),
+      JSON.stringify({ type: 'message', id: 'ctx', timestamp: '2026-07-09T00:00:00.500Z', message: { role: 'custom', customType: 'volatile-project-context', content: '<system-reminder>noise</system-reminder>', display: false } }),
+      JSON.stringify({ type: 'message', id: 'u1', timestamp: '2026-07-09T00:00:01.000Z', message: { role: 'user', content: [{ type: 'text', text: 'Fix the pagination bug' }] } }),
+      JSON.stringify({ type: 'message', id: 'a1', timestamp: '2026-07-09T00:00:02.000Z', message: { role: 'assistant', content: [{ type: 'text', text: 'Done.' }] } }),
+    ];
+    await writeFile(path.join(sessionsDir, '2026-07-09T00-00-00_gjc-stream.jsonl'), `${lines.join('\n')}\n`, 'utf8');
+
+    await withIsolatedDatabase(async () => {
+      const processed = await new GjcSessionSynchronizer().synchronize();
+      assert.equal(processed, 1);
+      assert.equal(sessionsDb.getSessionById('gjc-stream')?.custom_name, 'Fix the pagination bug');
+    });
+  } finally {
+    restoreHomeDir();
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});

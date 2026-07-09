@@ -1,6 +1,7 @@
 import os from 'node:os';
 import path from 'node:path';
-import { readFile } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
+import { createInterface } from 'node:readline';
 
 import { sessionsDb } from '@/modules/database/index.js';
 import {
@@ -86,7 +87,13 @@ export class GjcSessionSynchronizer implements IProviderSessionSynchronizer {
     );
 
     let processed = 0;
+    let iterated = 0;
     for (const filePath of files) {
+      // Yield to the event loop periodically so a large first-index full sync
+      // (thousands of sessions, concurrent with other providers) doesn't starve it.
+      if (++iterated % 50 === 0) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
       if (this.isSubagentTranscript(filePath)) {
         continue;
       }
@@ -203,11 +210,15 @@ export class GjcSessionSynchronizer implements IProviderSessionSynchronizer {
    * text is joined from the message's content parts.
    */
   private async extractFirstUserMessageFromStart(filePath: string): Promise<string | undefined> {
+    // Stream line-by-line and stop at the first user message instead of reading the
+    // whole file. gjc has no title index (unlike claude/codex which read one index
+    // file), so title derivation runs per session; a full readFile + split of a large
+    // transcript (thousands of lines) during a full sync is the gjc-specific event-loop
+    // hog. The first user message is near the top, so this reads only a few lines.
+    let rl: ReturnType<typeof createInterface> | undefined;
     try {
-      const content = await readFile(filePath, 'utf8');
-      const lines = content.split(/\r?\n/);
-
-      for (const rawLine of lines) {
+      rl = createInterface({ input: createReadStream(filePath, 'utf8'), crlfDelay: Infinity });
+      for await (const rawLine of rl) {
         const line = rawLine.trim();
         if (!line) {
           continue;
@@ -237,6 +248,8 @@ export class GjcSessionSynchronizer implements IProviderSessionSynchronizer {
       }
     } catch {
       // Ignore missing/unreadable files so sync can continue.
+    } finally {
+      rl?.close();
     }
 
     return undefined;
