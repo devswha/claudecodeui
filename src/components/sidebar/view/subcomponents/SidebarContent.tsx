@@ -189,7 +189,7 @@ export default function SidebarContent({
   projectListProps,
   t,
 }: SidebarContentProps) {
-  const [topTab, setTopTab] = useState<'live' | 'archive'>('archive');
+  const [topTab, setTopTab] = useState<'live' | 'archive'>('live');
   const showConversationSearch = searchMode === 'conversations' && searchFilter.trim().length >= 2;
   const hasPartialResults = conversationResults && conversationResults.results.length > 0;
   const groupedArchivedSessions = groupArchivedSessionsByProject(archivedSessions);
