@@ -6,8 +6,8 @@ import { IS_PLATFORM } from '../../../../constants/config';
 import { useVersionCheck } from '../../../../hooks/useVersionCheck';
 import PremiumFeatureCard from '../PremiumFeatureCard';
 
-const GITHUB_REPO_URL = 'https://github.com/siteboon/claudecodeui';
-const DISCORD_URL = 'https://discord.gg/buxwujPNRE';
+const GITHUB_REPO_URL = 'https://github.com/devswha/claudecodeui';
+const DISCORD_URL = 'https://discord.gg/dskZax5JPh';
 const DOCS_URL = 'https://cloudcli.ai/docs/plugin-overview';
 const CLOUDCLI_URL = 'https://cloudcli.ai';
 
@@ -29,7 +29,7 @@ function DiscordIcon({ className }: { className?: string }) {
 
 export default function AboutTab() {
   const { t } = useTranslation('settings');
-  const { updateAvailable, latestVersion, currentVersion, releaseInfo } = useVersionCheck('siteboon', 'claudecodeui');
+  const { updateAvailable, latestVersion, currentVersion, releaseInfo } = useVersionCheck('devswha', 'claudecodeui');
   const releasesUrl = releaseInfo?.htmlUrl || `${GITHUB_REPO_URL}/releases`;
 
   return (

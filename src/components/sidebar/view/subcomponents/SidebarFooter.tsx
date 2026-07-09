@@ -3,10 +3,10 @@ import type { TFunction } from 'i18next';
 import { IS_PLATFORM } from '../../../../constants/config';
 import type { ReleaseInfo } from '../../../../types/sharedTypes';
 
-const GITHUB_ISSUES_URL = 'https://github.com/siteboon/claudecodeui/issues/new';
-const GITHUB_REPO_URL = 'https://github.com/siteboon/claudecodeui';
+const GITHUB_ISSUES_URL = 'https://github.com/devswha/claudecodeui/issues/new';
+const GITHUB_REPO_URL = 'https://github.com/devswha/claudecodeui';
 
-const DISCORD_INVITE_URL = 'https://discord.gg/buxwujPNRE';
+const DISCORD_INVITE_URL = 'https://discord.gg/dskZax5JPh';
 
 function DiscordIcon({ className }: { className?: string }) {
   return (
