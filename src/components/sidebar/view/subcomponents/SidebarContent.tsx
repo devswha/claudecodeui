@@ -1,4 +1,4 @@
-import { type ReactNode } from 'react';
+import { type ReactNode, useState } from 'react';
 import { Activity, Archive, Folder, MessageSquare, RotateCcw, Search, Trash2 } from 'lucide-react';
 import type { TFunction } from 'i18next';
 
@@ -189,6 +189,7 @@ export default function SidebarContent({
   projectListProps,
   t,
 }: SidebarContentProps) {
+  const [topTab, setTopTab] = useState<'live' | 'archive'>('archive');
   const showConversationSearch = searchMode === 'conversations' && searchFilter.trim().length >= 2;
   const hasPartialResults = conversationResults && conversationResults.results.length > 0;
   const groupedArchivedSessions = groupArchivedSessionsByProject(archivedSessions);
@@ -218,6 +219,40 @@ export default function SidebarContent({
         t={t}
       />
 
+      <div className="flex gap-1 px-2 pt-2 md:px-1.5">
+        <button
+          type="button"
+          onClick={() => setTopTab('live')}
+          className={`flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${topTab === 'live' ? 'bg-primary/10 text-foreground' : 'text-muted-foreground hover:bg-muted/50'}`}
+        >
+          <span className="inline-flex h-1.5 w-1.5 rounded-full bg-blue-500" aria-hidden />
+          작동 중{projectListProps.liveSessionIds.size > 0 ? ` (${projectListProps.liveSessionIds.size})` : ''}
+        </button>
+        <button
+          type="button"
+          onClick={() => setTopTab('archive')}
+          className={`flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${topTab === 'archive' ? 'bg-primary/10 text-foreground' : 'text-muted-foreground hover:bg-muted/50'}`}
+        >
+          보관함
+        </button>
+      </div>
+
+      {topTab === 'live' ? (
+        <ScrollArea className="flex-1 overflow-y-auto overscroll-contain md:px-1.5 md:py-2">
+          {projectListProps.liveSessionIds.size === 0 ? (
+            <div className="px-4 py-12 text-center text-sm text-muted-foreground md:py-8">
+              지금 tmux에서 작동 중인 gjc 세션이 없습니다.
+            </div>
+          ) : (
+            <SidebarLiveSection
+              projects={projects}
+              liveSessionIds={projectListProps.liveSessionIds}
+              selectedSession={projectListProps.selectedSession}
+              onSessionSelect={projectListProps.onSessionSelect}
+            />
+          )}
+        </ScrollArea>
+      ) : (
       <ScrollArea className="flex-1 overflow-y-auto overscroll-contain md:px-1.5 md:py-2">
         {showConversationSearch ? (
           isSearching && !hasPartialResults ? (
@@ -550,17 +585,10 @@ export default function SidebarContent({
             </div>
           )
         ) : (
-          <>
-            <SidebarLiveSection
-              projects={projects}
-              liveSessionIds={projectListProps.liveSessionIds}
-              selectedSession={projectListProps.selectedSession}
-              onSessionSelect={projectListProps.onSessionSelect}
-            />
-            <SidebarProjectList {...projectListProps} />
-          </>
+          <SidebarProjectList {...projectListProps} />
         )}
       </ScrollArea>
+      )}
 
       <SidebarFooter
         updateAvailable={updateAvailable}
