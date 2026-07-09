@@ -8,7 +8,7 @@ import { providerSkillsService } from '@/modules/providers/services/skills.servi
 import { sessionConversationsSearchService } from '@/modules/providers/services/session-conversations-search.service.js';
 import { sessionsService } from '@/modules/providers/services/sessions.service.js';
 import { getLiveGjcSessions } from '@/modules/providers/services/live-sessions.service.js';
-import { isValidTmuxName, sendToLiveSession } from '@/modules/providers/services/live-send.service.js';
+import { isValidTmuxName, sendToLiveSession, isValidSpawnName, spawnLiveSession } from '@/modules/providers/services/live-send.service.js';
 import type {
   LLMProvider,
   McpScope,
@@ -585,6 +585,23 @@ router.post(
       throw new AppError('message is required.', { code: 'EMPTY_MESSAGE', statusCode: 400 });
     }
     const result = await sendToLiveSession(body.tmuxName, message);
+    res.json(createApiSuccessResponse(result));
+  }),
+);
+
+router.post(
+  '/sessions/live/spawn',
+  asyncHandler(async (req: Request, res: Response) => {
+    // Spawn a new tmux gjc session via the control tower's /spawn (name + cwd).
+    const body = (req.body ?? {}) as { name?: unknown; cwd?: unknown };
+    if (!isValidSpawnName(body.name)) {
+      throw new AppError('A valid session name is required (alphanumeric, not "company").', { code: 'INVALID_SPAWN_NAME', statusCode: 400 });
+    }
+    const cwd = typeof body.cwd === 'string' ? body.cwd.trim() : '';
+    if (!cwd) {
+      throw new AppError('cwd is required.', { code: 'EMPTY_CWD', statusCode: 400 });
+    }
+    const result = await spawnLiveSession(body.name, cwd);
     res.json(createApiSuccessResponse(result));
   }),
 );

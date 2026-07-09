@@ -74,6 +74,12 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ tmuxName, message }),
     }),
+  // Spawn a new tmux gjc session via the control tower (POST /spawn).
+  liveSessionSpawn: (name, cwd) =>
+    authenticatedFetch('/api/providers/sessions/live/spawn', {
+      method: 'POST',
+      body: JSON.stringify({ name, cwd }),
+    }),
   projectSessions: (projectId, { limit = 20, offset = 0 } = {}) => {
     const params = new URLSearchParams();
     params.set('limit', String(limit));

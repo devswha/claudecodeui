@@ -14,6 +14,7 @@ import SidebarFooter from './SidebarFooter';
 import SidebarHeader from './SidebarHeader';
 import SidebarProjectList, { type SidebarProjectListProps } from './SidebarProjectList';
 import SidebarLiveSection from './SidebarLiveSection';
+import SidebarSpawnSession from './SidebarSpawnSession';
 
 function HighlightedSnippet({ snippet, highlights }: { snippet: string; highlights: { start: number; end: number }[] }) {
   const parts: ReactNode[] = [];
@@ -250,8 +251,9 @@ export default function SidebarContent({
 
       {topTab === 'live' ? (
         <ScrollArea className="flex-1 overflow-y-auto overscroll-contain md:px-1.5 md:py-2">
+          <SidebarSpawnSession />
           {projectListProps.liveSessionIds.size === 0 ? (
-            <div className="px-4 py-12 text-center text-sm text-muted-foreground md:py-8">
+            <div className="px-4 py-8 text-center text-sm text-muted-foreground">
               지금 tmux에서 작동 중인 gjc 세션이 없습니다.
             </div>
           ) : (

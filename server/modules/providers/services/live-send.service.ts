@@ -53,3 +53,39 @@ export async function sendToLiveSession(tmuxName: string, message: string): Prom
   const text = await response.text().catch(() => '');
   return classifyTowerResponse(response.status, text);
 }
+
+// ─── Spawn a new tmux gjc session (control tower /spawn) ─────────────────────
+// The tower validates authoritatively (alphanumeric name, no reserved 'company',
+// cwd under $HOME, no duplicate → 409) and creates the tmux session + boots gjc.
+// The app pre-checks for a friendly error and proxies the rest.
+
+export function isValidSpawnName(name: unknown): name is string {
+  return isValidTmuxName(name) && name.toLowerCase() !== 'company';
+}
+
+export type LiveSpawnResult = { ok: boolean; reachable: boolean; conflict: boolean; detail: string };
+
+/** Pure classifier for the tower's /spawn response (409 = name already exists). */
+export function classifySpawnResponse(status: number, body: string): LiveSpawnResult {
+  const detail = body.trim().slice(0, 500);
+  const ok = status >= 200 && status < 300;
+  return { ok, reachable: true, conflict: status === 409, detail };
+}
+
+/** Proxies a spawn request to the tower's /spawn. Never throws — returns a result. */
+export async function spawnLiveSession(name: string, cwd: string): Promise<LiveSpawnResult> {
+  const body = new URLSearchParams({ name, cwd });
+  let response: Response;
+  try {
+    response = await fetch(`${towerUrl()}/spawn`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body,
+      signal: AbortSignal.timeout(10000),
+    });
+  } catch {
+    return { ok: false, reachable: false, conflict: false, detail: 'control tower is not reachable' };
+  }
+  const text = await response.text().catch(() => '');
+  return classifySpawnResponse(response.status, text);
+}
