@@ -68,11 +68,12 @@ import { assetsRoutes } from './modules/assets/index.js';
 import browserUseMcpRoutes from './modules/browser-use/browser-use-mcp.routes.js';
 import { browserUseService } from './modules/browser-use/browser-use.service.js';
 import { startEnabledPluginServers, stopAllPlugins, getPluginPort } from './utils/plugin-process-manager.js';
-import { initializeDatabase, projectsDb, sessionsDb } from './modules/database/index.js';
+import { initializeDatabase, projectsDb, sessionsDb, userDb } from './modules/database/index.js';
 import { configureWebPush } from './services/vapid-keys.js';
 import { validateApiKey, authenticateToken, authenticateWebSocket } from './middleware/auth.js';
 import { IS_PLATFORM } from './constants/config.js';
 import { c } from './utils/colors.js';
+import { evaluateExposure } from './utils/exposure-guard.js';
 
 const __dirname = getModuleDir(import.meta.url);
 // The server source runs from /server, while the compiled output runs from /dist-server/server.
@@ -1540,7 +1541,9 @@ async function getFileTree(dirPath, maxDepth = 3, currentDepth = 0, showHidden =
 }
 
 const SERVER_PORT = process.env.SERVER_PORT || 3001;
-const HOST = process.env.HOST || '0.0.0.0';
+// Loopback by default (fail-closed): this UI can run shell commands, so network
+// exposure must be an explicit choice (HOST env / --host) — see utils/exposure-guard.js.
+const HOST = process.env.HOST || '127.0.0.1';
 const DISPLAY_HOST = getConnectableHost(HOST);
 const VITE_PORT = process.env.VITE_PORT || 5173;
 const LOCAL_SERVER_MARKER_PATH = path.join(os.homedir(), '.cloudcli', 'local-server.json');
@@ -1583,6 +1586,21 @@ async function startServer() {
     try {
         // Initialize authentication database
         await initializeDatabase();
+
+        // Fail-closed exposure guard: refuse non-loopback listen while no
+        // account exists (first /register would be claimable network-wide).
+        const exposure = evaluateExposure({
+            host: HOST,
+            hasUsers: userDb.hasUsers(),
+            allowRemoteSetup: process.env.ALLOW_REMOTE_SETUP === '1',
+        });
+        if (exposure.level === 'block') {
+            console.error(`${c.warn('[SECURITY]')} ${exposure.message}`);
+            process.exit(1);
+        }
+        if (exposure.level === 'warn') {
+            console.warn(`${c.warn('[SECURITY]')} ${exposure.message}`);
+        }
 
         // Configure Web Push (VAPID keys)
         configureWebPush();

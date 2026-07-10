@@ -165,6 +165,7 @@ Commands:
 
 Options:
   -p, --port <port>           Set server port (default: 3001)
+  --host <host>               Set bind address (default: 127.0.0.1; use 0.0.0.0 to expose)
   --database-path <path>      Set custom database location
   -h, --help                  Show this help information
   -v, --version               Show version information
@@ -172,15 +173,18 @@ Options:
 Examples:
   $ cloudcli                        # Start with defaults
   $ cloudcli --port 8080            # Start on port 8080
+  $ cloudcli --host 0.0.0.0         # Expose on the network (auth required — see below)
   $ cloudcli sandbox ~/my-project   # Run in a Docker sandbox
   $ cloudcli status                 # Show configuration
 
 Environment Variables:
   SERVER_PORT         Set server port (default: 3001)
+  HOST                Set bind address (default: 127.0.0.1 — loopback only)
   PORT                Set server port (default: 3001) (LEGACY)
   DATABASE_PATH       Set custom database location
   CLAUDE_CLI_PATH     Set custom Claude CLI path
   CONTEXT_WINDOW      Set context window size (default: 160000)
+  ALLOW_REMOTE_SETUP  Set to 1 to allow first-run setup on a non-loopback HOST (trusted networks only)
 
 Documentation:
   ${packageJson.homepage || 'https://github.com/siteboon/claudecodeui'}
@@ -619,6 +623,10 @@ function parseArgs(args) {
             parsed.options.serverPort = args[++i];
         } else if (arg.startsWith('--port=')) {
             parsed.options.serverPort = arg.split('=')[1];
+        } else if (arg === '--host') {
+            parsed.options.host = args[++i];
+        } else if (arg.startsWith('--host=')) {
+            parsed.options.host = arg.split('=')[1];
         } else if (arg === '--database-path') {
             parsed.options.databasePath = args[++i];
         } else if (arg.startsWith('--database-path=')) {
@@ -652,6 +660,9 @@ async function main() {
     }
     if (options.databasePath) {
         process.env.DATABASE_PATH = options.databasePath;
+    }
+    if (options.host) {
+        process.env.HOST = options.host;
     }
 
     switch (command) {
