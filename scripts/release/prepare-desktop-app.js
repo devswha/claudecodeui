@@ -64,10 +64,16 @@ async function copyNodeModule(packageName) {
   return true;
 }
 
+// The desktop app versions independently of the upstream web package (gjc-desktop-vX.Y.Z
+// releases; v0.1.0/v0.1.1 both shipped as internal 1.36.1 and were indistinguishable).
+// Resolution: GJC_DESKTOP_VERSION env > package.json desktopVersion > web version.
+const desktopVersion =
+  process.env.GJC_DESKTOP_VERSION || packageJson.desktopVersion || packageJson.version;
+
 function buildDesktopPackageJson(copiedOptionalDependencies) {
   return {
     name: `${packageJson.name}-desktop`,
-    version: packageJson.version,
+    version: desktopVersion,
     productName: packageJson.productName,
     description: `${packageJson.productName} desktop shell`,
     author: packageJson.author,
@@ -149,6 +155,7 @@ await fs.writeFile(
 );
 
 console.log(`Prepared thin desktop app at ${path.relative(rootDir, stageDir)}`);
+console.log(`Desktop version: ${desktopVersion} (web package ${packageJson.version})`);
 console.log(`Runtime dependencies: ${copiedRuntimeDependencies.join(', ')}`);
 if (Object.keys(copiedOptionalDependencies).length) {
   console.log(`Optional dependencies: ${Object.keys(copiedOptionalDependencies).join(', ')}`);
