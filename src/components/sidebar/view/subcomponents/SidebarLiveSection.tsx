@@ -70,7 +70,15 @@ export default function SidebarLiveSection({
       .map((session) => ({ project, session })),
   );
 
-  if (rows.length === 0) {
+  // Live ids whose session isn't in any *loaded* project page (pagination) still
+  // deserve a row — otherwise whole live sessions silently vanish from the tab
+  // (하코 관찰: horcrux/patina 라이브가 안 보임). They render with the tmux name
+  // (or a placeholder) and keep the kill control; selection needs the loaded
+  // session object, so they are not clickable until the session list loads them.
+  const matchedIds = new Set(rows.map(({ session }) => session.id));
+  const orphans = [...liveSessionIds].filter((id) => !matchedIds.has(id) && !killedIds.has(id));
+
+  if (rows.length === 0 && orphans.length === 0) {
     return null;
   }
 
@@ -117,6 +125,66 @@ export default function SidebarLiveSection({
     }
   };
 
+  // Shared kill affordances (matched rows + orphan rows use the same flow).
+  const killButton = (id: string, tmuxName: string) =>
+    statusOf(id).kind === 'idle' ? (
+      <button
+        type="button"
+        title={`tmux 세션 ${tmuxName} 닫기`}
+        onClick={() => setStatusOf(id, { kind: 'confirming' })}
+        className="mr-1 mt-1.5 rounded p-1 text-muted-foreground/60 transition-colors hover:bg-red-500/10 hover:text-red-500"
+      >
+        <X className="h-3.5 w-3.5" />
+      </button>
+    ) : null;
+
+  const killStrip = (id: string, tmuxName: string) => {
+    const status = statusOf(id);
+    if (status.kind === 'idle') {
+      return null;
+    }
+    return (
+      <div className="px-2 pb-1.5 pl-[1.375rem]">
+        {status.kind === 'error' ? (
+          <p className="flex items-center justify-between gap-2 text-[11px] text-red-500">
+            <span className="truncate">{status.text}</span>
+            <button
+              type="button"
+              onClick={() => setStatusOf(id, { kind: 'idle' })}
+              className="shrink-0 text-muted-foreground hover:text-foreground"
+            >
+              닫기
+            </button>
+          </p>
+        ) : (
+          <div className="flex items-center justify-between gap-2">
+            <span className="truncate text-[11px] text-muted-foreground">
+              {status.kind === 'killing' ? '종료 중…' : `tmux 세션 '${tmuxName}' 종료?`}
+            </span>
+            {status.kind === 'confirming' && (
+              <span className="flex shrink-0 items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => void kill(id, tmuxName)}
+                  className="rounded bg-red-600 px-2 py-0.5 text-[11px] font-medium text-white transition-colors hover:bg-red-700"
+                >
+                  종료
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setStatusOf(id, { kind: 'idle' })}
+                  className="rounded px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  취소
+                </button>
+              </span>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="px-2 py-2">
       <div className="space-y-0.5">
@@ -126,7 +194,6 @@ export default function SidebarLiveSection({
           const tmuxName = liveSessionNames.get(session.id);
           const primary = tmuxName ?? title;
           const age = formatAge(getSessionTime(session));
-          const status = statusOf(session.id);
           return (
             <div
               key={session.id}
@@ -153,61 +220,41 @@ export default function SidebarLiveSection({
                     {project.displayName}{age ? ` · ${age}` : ''}
                   </span>
                 </button>
-                {tmuxName && status.kind === 'idle' && (
-                  <button
-                    type="button"
-                    title={`tmux 세션 ${tmuxName} 닫기`}
-                    onClick={() => setStatusOf(session.id, { kind: 'confirming' })}
-                    className="mr-1 mt-1.5 rounded p-1 text-muted-foreground/60 transition-colors hover:bg-red-500/10 hover:text-red-500"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                )}
+                {tmuxName && killButton(session.id, tmuxName)}
               </div>
-              {tmuxName && status.kind !== 'idle' && (
-                <div className="px-2 pb-1.5 pl-[1.375rem]">
-                  {status.kind === 'error' ? (
-                    <p className="flex items-center justify-between gap-2 text-[11px] text-red-500">
-                      <span className="truncate">{status.text}</span>
-                      <button
-                        type="button"
-                        onClick={() => setStatusOf(session.id, { kind: 'idle' })}
-                        className="shrink-0 text-muted-foreground hover:text-foreground"
-                      >
-                        닫기
-                      </button>
-                    </p>
-                  ) : (
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="truncate text-[11px] text-muted-foreground">
-                        {status.kind === 'killing' ? '종료 중…' : `tmux 세션 '${tmuxName}' 종료?`}
-                      </span>
-                      {status.kind === 'confirming' && (
-                        <span className="flex shrink-0 items-center gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => void kill(session.id, tmuxName)}
-                            className="rounded bg-red-600 px-2 py-0.5 text-[11px] font-medium text-white transition-colors hover:bg-red-700"
-                          >
-                            종료
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setStatusOf(session.id, { kind: 'idle' })}
-                            className="rounded px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:text-foreground"
-                          >
-                            취소
-                          </button>
-                        </span>
-                      )}
-                    </div>
-                  )}
+              {tmuxName && killStrip(session.id, tmuxName)}
+            </div>
+          );
+        })}
+        {orphans.map((id) => {
+          const tmuxName = liveSessionNames.get(id);
+          return (
+            <div key={id} className="rounded-md transition-colors hover:bg-muted/50">
+              <div className="flex items-start">
+                <div className="flex min-w-0 flex-1 flex-col gap-0.5 px-2 py-1.5 text-left">
+                  <span className="flex items-center gap-2">
+                    <span className="inline-flex h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-blue-500" aria-hidden />
+                    <span className="shrink-0 rounded bg-blue-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-blue-600 dark:text-blue-400">
+                      LIVE
+                    </span>
+                    <span className="truncate text-sm font-medium text-foreground">
+                      {tmuxName ?? '이름 미확인 세션'}
+                    </span>
+                  </span>
+                  <span className="truncate pl-[1.375rem] text-[11px] text-muted-foreground">
+                    대화 미로딩 — 해당 프로젝트를 열면 제목이 표시됩니다
+                  </span>
                 </div>
-              )}
+                {tmuxName && killButton(id, tmuxName)}
+              </div>
+              {tmuxName && killStrip(id, tmuxName)}
             </div>
           );
         })}
       </div>
+      <p className="px-2 pt-2 text-[10px] leading-relaxed text-muted-foreground/70">
+        tmux 안에서 도는 gjc 세션만 감지됩니다 — claude 등 다른 CLI 세션은 표시되지 않습니다.
+      </p>
     </div>
   );
 }
