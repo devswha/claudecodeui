@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { createHash } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -261,9 +262,13 @@ export function handleShellConnection(
             initialCommand.includes('cursor-agent login') ||
             initialCommand.includes('auth login'));
 
+        // Key by a hash of the WHOLE command: a base64 prefix only covers the
+        // first 12 bytes, so distinct commands sharing a prefix (e.g. two
+        // `tmux attach-session -t =<name>` targets) would collide and
+        // reconnect to the wrong PTY.
         const commandSuffix =
           isPlainShell && initialCommand
-            ? `_cmd_${Buffer.from(initialCommand).toString('base64').slice(0, 16)}`
+            ? `_cmd_${createHash('sha256').update(initialCommand).digest('hex').slice(0, 16)}`
             : '';
         ptySessionKey = `${projectPath}_${sessionId ?? 'default'}${commandSuffix}`;
 

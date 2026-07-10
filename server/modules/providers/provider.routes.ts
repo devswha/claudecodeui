@@ -8,6 +8,7 @@ import { providerSkillsService } from '@/modules/providers/services/skills.servi
 import { sessionConversationsSearchService } from '@/modules/providers/services/session-conversations-search.service.js';
 import { sessionsService } from '@/modules/providers/services/sessions.service.js';
 import { getLiveGjcSessions } from '@/modules/providers/services/live-sessions.service.js';
+import { getExternalCliSessions } from '@/modules/providers/services/external-cli-sessions.service.js';
 import { isValidTmuxName, sendToLiveSession, isValidSpawnName, spawnLiveSession, killLiveSession } from '@/modules/providers/services/live-send.service.js';
 import type {
   LLMProvider,
@@ -569,6 +570,21 @@ router.get(
       liveSessions,
       liveSessionIds: liveSessions.map((session) => session.id),
     }));
+  }),
+);
+
+router.get(
+  '/sessions/external',
+  asyncHandler(async (_req: Request, res: Response) => {
+    // External CLI (claude/codex) tmux sessions for the Termius-style terminal
+    // lane. gjc sessions are excluded by contract — they live in /sessions/live.
+    // Two layers: the service drops sessions with a gjc process in a pane
+    // subtree; here we also subtract tmux names the gjc live lane claimed via
+    // its cwd fallback (a gjc holder OUTSIDE the pane tree — 실측: patina).
+    const [externalAll, liveGjc] = await Promise.all([getExternalCliSessions(), getLiveGjcSessions()]);
+    const gjcNames = new Set(liveGjc.map((session) => session.tmuxName).filter(Boolean));
+    const externalSessions = externalAll.filter((session) => !gjcNames.has(session.tmuxName));
+    res.json(createApiSuccessResponse({ externalSessions }));
   }),
 );
 

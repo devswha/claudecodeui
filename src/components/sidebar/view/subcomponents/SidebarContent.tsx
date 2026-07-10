@@ -14,6 +14,7 @@ import SidebarFooter from './SidebarFooter';
 import SidebarHeader from './SidebarHeader';
 import SidebarProjectList, { type SidebarProjectListProps } from './SidebarProjectList';
 import SidebarLiveSection from './SidebarLiveSection';
+import SidebarExternalSection from './SidebarExternalSection';
 import SidebarSpawnSession from './SidebarSpawnSession';
 
 function HighlightedSnippet({ snippet, highlights }: { snippet: string; highlights: { start: number; end: number }[] }) {
@@ -265,6 +266,7 @@ export default function SidebarContent({
               liveSessionNames={liveSessionNames}
             />
           )}
+          <SidebarExternalSection projects={projects} />
         </ScrollArea>
       ) : (
       <ScrollArea className="flex-1 overflow-y-auto overscroll-contain md:px-1.5 md:py-2">
