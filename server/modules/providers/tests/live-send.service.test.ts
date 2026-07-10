@@ -6,6 +6,7 @@ import {
   isValidTmuxName,
   isValidSpawnName,
   classifySpawnResponse,
+  classifyKillResponse,
 } from '@/modules/providers/services/live-send.service.js';
 
 test('isValidTmuxName accepts simple session tokens, rejects unsafe ones', () => {
@@ -53,4 +54,23 @@ test('classifySpawnResponse: 2xx ok, 409 conflict, 4xx failure (all reachable)',
   const failed = classifySpawnResponse(400, 'cwd must be under $HOME');
   assert.equal(failed.ok, false);
   assert.equal(failed.conflict, false);
+});
+
+test('classifyKillResponse: 2xx ok, 403 protected, 422 unknown (all reachable)', () => {
+  assert.deepEqual(classifyKillResponse(200, 'killed patina'), {
+    ok: true, reachable: true, protected: false, unknown: false, detail: 'killed patina',
+  });
+  const guarded = classifyKillResponse(403, '보호 세션 omg — 수동으로만 종료');
+  assert.equal(guarded.ok, false);
+  assert.equal(guarded.protected, true);
+  assert.equal(guarded.unknown, false);
+  assert.equal(guarded.reachable, true);
+  const ghost = classifyKillResponse(422, '미지의 세션: ghost');
+  assert.equal(ghost.ok, false);
+  assert.equal(ghost.protected, false);
+  assert.equal(ghost.unknown, true);
+  const failed = classifyKillResponse(500, 'tmux 실패');
+  assert.equal(failed.ok, false);
+  assert.equal(failed.protected, false);
+  assert.equal(failed.unknown, false);
 });

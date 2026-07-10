@@ -80,6 +80,13 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ name, cwd }),
     }),
+  // Kill a live tmux session via the control tower (POST /kill). The tower is
+  // the fleet-lifecycle authority — protected sessions are refused there.
+  liveSessionKill: (tmuxName) =>
+    authenticatedFetch('/api/providers/sessions/live/kill', {
+      method: 'POST',
+      body: JSON.stringify({ tmuxName }),
+    }),
   projectSessions: (projectId, { limit = 20, offset = 0 } = {}) => {
     const params = new URLSearchParams();
     params.set('limit', String(limit));

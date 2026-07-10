@@ -89,3 +89,36 @@ export async function spawnLiveSession(name: string, cwd: string): Promise<LiveS
   const text = await response.text().catch(() => '');
   return classifySpawnResponse(response.status, text);
 }
+
+// ─── Kill a live tmux session (control tower /kill) ──────────────────────────
+// Fleet lifecycle authority stays with the tower — the app only calls this
+// entrance. The tower validates authoritatively (name regex, protected sessions
+// [tower's own + company* + TOWER_PROTECTED_SESSIONS] → 403, unknown → 422) and
+// runs `tmux kill-session`.
+
+export type LiveKillResult = { ok: boolean; reachable: boolean; protected: boolean; unknown: boolean; detail: string };
+
+/** Pure classifier for the tower's /kill response (403 = protected, 422 = unknown session). */
+export function classifyKillResponse(status: number, body: string): LiveKillResult {
+  const detail = body.trim().slice(0, 500);
+  const ok = status >= 200 && status < 300;
+  return { ok, reachable: true, protected: status === 403, unknown: status === 422, detail };
+}
+
+/** Proxies a kill request to the tower's /kill. Never throws — returns a result. */
+export async function killLiveSession(tmuxName: string): Promise<LiveKillResult> {
+  const body = new URLSearchParams({ session: tmuxName });
+  let response: Response;
+  try {
+    response = await fetch(`${towerUrl()}/kill`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body,
+      signal: AbortSignal.timeout(10000),
+    });
+  } catch {
+    return { ok: false, reachable: false, protected: false, unknown: false, detail: 'control tower is not reachable' };
+  }
+  const text = await response.text().catch(() => '');
+  return classifyKillResponse(response.status, text);
+}

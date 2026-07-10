@@ -8,7 +8,7 @@ import { providerSkillsService } from '@/modules/providers/services/skills.servi
 import { sessionConversationsSearchService } from '@/modules/providers/services/session-conversations-search.service.js';
 import { sessionsService } from '@/modules/providers/services/sessions.service.js';
 import { getLiveGjcSessions } from '@/modules/providers/services/live-sessions.service.js';
-import { isValidTmuxName, sendToLiveSession, isValidSpawnName, spawnLiveSession } from '@/modules/providers/services/live-send.service.js';
+import { isValidTmuxName, sendToLiveSession, isValidSpawnName, spawnLiveSession, killLiveSession } from '@/modules/providers/services/live-send.service.js';
 import type {
   LLMProvider,
   McpScope,
@@ -602,6 +602,20 @@ router.post(
       throw new AppError('cwd is required.', { code: 'EMPTY_CWD', statusCode: 400 });
     }
     const result = await spawnLiveSession(body.name, cwd);
+    res.json(createApiSuccessResponse(result));
+  }),
+);
+
+router.post(
+  '/sessions/live/kill',
+  asyncHandler(async (req: Request, res: Response) => {
+    // Kill a live tmux session via the control tower's /kill. The tower is the
+    // fleet-lifecycle authority (protected sessions → 403, unknown → 422).
+    const body = (req.body ?? {}) as { tmuxName?: unknown };
+    if (!isValidTmuxName(body.tmuxName)) {
+      throw new AppError('A valid tmuxName is required.', { code: 'INVALID_TMUX_NAME', statusCode: 400 });
+    }
+    const result = await killLiveSession(body.tmuxName);
     res.json(createApiSuccessResponse(result));
   }),
 );
