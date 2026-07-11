@@ -363,6 +363,10 @@ export function useProjectsState({
   const [liveSessionIds, setLiveSessionIds] = useState<Set<string>>(new Set());
   const [liveSessionNames, setLiveSessionNames] = useState<Map<string, string>>(new Map());
   const [liveSessionModels, setLiveSessionModels] = useState<Map<string, string>>(new Map());
+  // Session ids whose tmux name is a LINEAGE claim (gjc runs inside that tmux
+  // session). Only these may carry tmux actions (kill/relay) — cwd-fallback
+  // labels killed an unrelated claude tmux session (patina 실사고).
+  const [liveSessionLineage, setLiveSessionLineage] = useState<Set<string>>(new Set());
   const [activeTab, setActiveTab] = useState<AppTab>(readPersistedTab);
 
   useEffect(() => {
@@ -382,7 +386,7 @@ export function useProjectsState({
         const response = await api.liveSessions();
         if (!response.ok) return;
         const body = await response.json();
-        const liveSessions: Array<{ id: string; tmuxName?: string | null; model?: string | null }> =
+        const liveSessions: Array<{ id: string; tmuxName?: string | null; model?: string | null; claim?: string | null }> =
           body?.data?.liveSessions ?? body?.liveSessions ?? [];
         const ids: string[] = liveSessions.length > 0
           ? liveSessions.map((session) => session.id)
@@ -391,6 +395,7 @@ export function useProjectsState({
           setLiveSessionIds(new Set(ids));
           const names = new Map<string, string>();
           const models = new Map<string, string>();
+          const lineage = new Set<string>();
           for (const session of liveSessions) {
             if (session.tmuxName) {
               names.set(session.id, session.tmuxName);
@@ -398,9 +403,13 @@ export function useProjectsState({
             if (session.model) {
               models.set(session.id, session.model);
             }
+            if (session.claim === 'lineage') {
+              lineage.add(session.id);
+            }
           }
           setLiveSessionNames(names);
           setLiveSessionModels(models);
+          setLiveSessionLineage(lineage);
         }
       } catch {
         // ignore — live detection is best-effort
@@ -1071,6 +1080,7 @@ export function useProjectsState({
       attentionSessionIds,
       liveSessionIds,
       liveSessionNames,
+      liveSessionLineage,
       onProjectSelect: handleProjectSelect,
       onSessionSelect: handleSessionSelect,
       onNewSession: handleNewSession,
@@ -1090,6 +1100,7 @@ export function useProjectsState({
       attentionSessionIds,
       liveSessionIds,
       liveSessionNames,
+      liveSessionLineage,
       handleNewSession,
       handleProjectDelete,
       handleProjectSelect,

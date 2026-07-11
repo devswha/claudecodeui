@@ -23,7 +23,17 @@ const SESSIONS_SEGMENT = '.gjc/agent/sessions';
 const SESSION_FILE_RE = /\.gjc\/agent\/sessions\/[^/]+\/[^/]*_([0-9a-fA-F][0-9a-fA-F-]{7,})\.jsonl\b/;
 const TMUX_FIELD_SEP = '\t';
 
-export type LiveGjcSession = { id: string; tmuxName: string | null; model: string | null };
+export type LiveGjcSession = {
+  id: string;
+  tmuxName: string | null;
+  /**
+   * How the tmux name was resolved: 'lineage' = the gjc process runs INSIDE
+   * that tmux session (safe to kill/relay); 'cwd' = label-only directory match
+   * (the pane belongs to something else — tmux actions are forbidden).
+   */
+  claim: 'lineage' | 'cwd' | null;
+  model: string | null;
+};
 
 /** True when `tmux list-panes` reported at least one pane (a tmux server is up). */
 export function tmuxHasPanes(output: string): boolean {
@@ -92,7 +102,7 @@ export function computeLiveSessions(args: {
   tmuxPresent: boolean;
   panes: Array<{ name: string; pid: number; cwd: string }>;
   sessions: Array<{ id: string; pidChain: number[]; cwd: string | null }>;
-}): Array<Pick<LiveGjcSession, 'id' | 'tmuxName'>> {
+}): Array<Pick<LiveGjcSession, 'id' | 'tmuxName' | 'claim'>> {
   if (!args.tmuxPresent) {
     return [];
   }
@@ -119,7 +129,7 @@ export function computeLiveSessions(args: {
   }
 
   const claimed = new Set<number>();
-  const result = new Map<string, string | null>();
+  const result = new Map<string, { tmuxName: string | null; claim: 'lineage' | 'cwd' | null }>();
 
   // Pass 1: lineage matches claim their pane (authoritative, run for ALL sessions
   // before any cwd fallback so claims are complete).
@@ -133,24 +143,27 @@ export function computeLiveSessions(args: {
         break;
       }
     }
-    result.set(id, name);
+    result.set(id, { tmuxName: name, claim: name !== null ? 'lineage' : null });
   }
 
   // Pass 2: cwd fallback to an UNCLAIMED pane, only when the match is unique.
   for (const [id, session] of merged) {
-    if (result.get(id) !== null || !session.cwd) {
+    if (result.get(id)?.tmuxName !== null || !session.cwd) {
       continue;
     }
     const candidates = args.panes
       .map((pane, index) => ({ pane, index }))
       .filter(({ pane, index }) => !claimed.has(index) && pane.cwd === session.cwd);
     if (candidates.length === 1) {
-      result.set(id, candidates[0].pane.name);
+      // A cwd match only LABELS the row: the gjc process is NOT inside the
+      // pane, so tmux-session actions (kill/relay) must never key off it —
+      // 실사고: patina의 백그라운드 gjc 행을 닫자 무관한 claude tmux가 죽음.
+      result.set(id, { tmuxName: candidates[0].pane.name, claim: 'cwd' });
       claimed.add(candidates[0].index);
     }
   }
 
-  return [...result].map(([id, tmuxName]) => ({ id, tmuxName }));
+  return [...result].map(([id, entry]) => ({ id, tmuxName: entry.tmuxName, claim: entry.claim }));
 }
 
 function runCommand(command: string, cmdArgs: string[], timeoutMs = 4000): Promise<string> {

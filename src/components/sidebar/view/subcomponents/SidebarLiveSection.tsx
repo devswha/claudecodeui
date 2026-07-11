@@ -12,6 +12,10 @@ type SidebarLiveSectionProps = {
   projects: Project[];
   liveSessionIds: ReadonlySet<string>;
   liveSessionNames: ReadonlyMap<string, string>;
+  // Ids whose tmux name is a LINEAGE claim (gjc actually runs inside that tmux
+  // session). cwd-fallback labels are display-only: offering kill there killed
+  // an unrelated claude tmux session (patina 실사고).
+  liveSessionLineage: ReadonlySet<string>;
   selectedSession: ProjectSession | null;
   onSessionSelect: SidebarProjectListProps['onSessionSelect'];
 };
@@ -52,6 +56,7 @@ export default function SidebarLiveSection({
   projects,
   liveSessionIds,
   liveSessionNames,
+  liveSessionLineage,
   selectedSession,
   onSessionSelect,
 }: SidebarLiveSectionProps) {
@@ -220,9 +225,9 @@ export default function SidebarLiveSection({
                     {project.displayName}{age ? ` · ${age}` : ''}
                   </span>
                 </button>
-                {tmuxName && killButton(session.id, tmuxName)}
+                {tmuxName && liveSessionLineage.has(session.id) && killButton(session.id, tmuxName)}
               </div>
-              {tmuxName && killStrip(session.id, tmuxName)}
+              {tmuxName && liveSessionLineage.has(session.id) && killStrip(session.id, tmuxName)}
             </div>
           );
         })}
@@ -245,9 +250,9 @@ export default function SidebarLiveSection({
                     대화 미로딩 — 해당 프로젝트를 열면 제목이 표시됩니다
                   </span>
                 </div>
-                {tmuxName && killButton(id, tmuxName)}
+                {tmuxName && liveSessionLineage.has(id) && killButton(id, tmuxName)}
               </div>
-              {tmuxName && killStrip(id, tmuxName)}
+              {tmuxName && liveSessionLineage.has(id) && killStrip(id, tmuxName)}
             </div>
           );
         })}

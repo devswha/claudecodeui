@@ -55,10 +55,10 @@ test('computeLiveSessions maps each live session to its tmux name by pid lineage
     ],
   });
   assert.deepEqual(result.sort((a, b) => a.id.localeCompare(b.id)), [
-    { id: 'f1', tmuxName: 'flask' },
-    { id: 'n1', tmuxName: null },
-    { id: 'p1', tmuxName: 'patina' },
-    { id: 'x1', tmuxName: null },
+    { id: 'f1', tmuxName: 'flask', claim: 'lineage' },
+    { id: 'n1', tmuxName: null, claim: null },
+    { id: 'p1', tmuxName: 'patina', claim: 'lineage' },
+    { id: 'x1', tmuxName: null, claim: null },
   ]);
 });
 
@@ -78,8 +78,8 @@ test('computeLiveSessions disambiguates two panes in the same cwd via pid lineag
     ],
   });
   assert.deepEqual(result.sort((a, b) => a.id.localeCompare(b.id)), [
-    { id: '019f212c', tmuxName: 'omg' },
-    { id: '019f469d', tmuxName: 'patina' },
+    { id: '019f212c', tmuxName: 'omg', claim: 'lineage' },
+    { id: '019f469d', tmuxName: 'patina', claim: 'lineage' },
   ]);
 });
 
@@ -97,8 +97,8 @@ test('computeLiveSessions never double-labels a pane: cwd fallback skips a linea
     ],
   });
   assert.deepEqual(result.sort((a, b) => a.id.localeCompare(b.id)), [
-    { id: '019f212c', tmuxName: null },
-    { id: '019f469d', tmuxName: 'patina' },
+    { id: '019f212c', tmuxName: null, claim: null },
+    { id: '019f469d', tmuxName: 'patina', claim: 'lineage' },
   ]);
 });
 
@@ -110,7 +110,8 @@ test('computeLiveSessions falls back to cwd when the lineage misses and the pane
     // a single unclaimed pane.
     sessions: [{ id: 'o1', pidChain: [7777, 1], cwd: '/home/devswha/workspace/oh-my-gjc' }],
   });
-  assert.deepEqual(result, [{ id: 'o1', tmuxName: 'omg' }]);
+  // cwd fallback names the row but is LABEL-ONLY: claim 'cwd' (no kill/relay).
+  assert.deepEqual(result, [{ id: 'o1', tmuxName: 'omg', claim: 'cwd' }]);
 });
 
 test('computeLiveSessions cwd fallback yields null when multiple unclaimed panes share the cwd', () => {
@@ -123,7 +124,7 @@ test('computeLiveSessions cwd fallback yields null when multiple unclaimed panes
     // no lineage hit and the cwd matches two panes → ambiguous → null
     sessions: [{ id: 'a1', pidChain: [999], cwd: '/home/devswha/workspace' }],
   });
-  assert.deepEqual(result, [{ id: 'a1', tmuxName: null }]);
+  assert.deepEqual(result, [{ id: 'a1', tmuxName: null, claim: null }]);
 });
 
 test('computeLiveSessions merges holder rows by id (worker + main): either reaching the pane names it', () => {
@@ -136,7 +137,7 @@ test('computeLiveSessions merges holder rows by id (worker + main): either reach
       { id: 's1', pidChain: [3435700], cwd: null },
     ],
   });
-  assert.deepEqual(result, [{ id: 's1', tmuxName: 'stock' }]);
+  assert.deepEqual(result, [{ id: 's1', tmuxName: 'stock', claim: 'lineage' }]);
 });
 
 test('computeLiveSessions returns empty when no tmux (graceful degradation)', () => {

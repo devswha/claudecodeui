@@ -29,6 +29,7 @@ function Sidebar({
   attentionSessionIds,
   liveSessionIds,
   liveSessionNames,
+  liveSessionLineage,
   onProjectSelect,
   onSessionSelect,
   onNewSession,
@@ -311,6 +312,7 @@ function Sidebar({
             onShowSettings={onShowSettings}
             projectListProps={projectListProps}
             liveSessionNames={liveSessionNames}
+            liveSessionLineage={liveSessionLineage}
             onExternalTerminalOpen={onExternalTerminalOpen}
             t={t}
           />

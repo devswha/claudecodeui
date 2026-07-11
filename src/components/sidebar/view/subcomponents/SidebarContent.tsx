@@ -153,6 +153,7 @@ type SidebarContentProps = {
   onShowSettings: () => void;
   projectListProps: SidebarProjectListProps;
   liveSessionNames: ReadonlyMap<string, string>;
+  liveSessionLineage: ReadonlySet<string>;
   onExternalTerminalOpen: (target: ExternalTerminalTarget) => void;
   t: TFunction;
 };
@@ -193,6 +194,7 @@ export default function SidebarContent({
   onShowSettings,
   projectListProps,
   liveSessionNames,
+  liveSessionLineage,
   onExternalTerminalOpen,
   t,
 }: SidebarContentProps) {
@@ -285,6 +287,7 @@ export default function SidebarContent({
               selectedSession={projectListProps.selectedSession}
               onSessionSelect={projectListProps.onSessionSelect}
               liveSessionNames={liveSessionNames}
+              liveSessionLineage={liveSessionLineage}
             />
           )}
         </ScrollArea>

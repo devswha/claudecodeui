@@ -279,7 +279,13 @@ function AppContentInner() {
           selectedProject={selectedProject}
           selectedSession={selectedSession}
           isSessionReadOnly={Boolean(selectedSession && sidebarSharedProps.liveSessionIds.has(selectedSession.id))}
-          liveSessionTmuxName={selectedSession ? (sidebarSharedProps.liveSessionNames.get(selectedSession.id) ?? null) : null}
+          liveSessionTmuxName={
+            // Relay (tower /send types into the tmux pane) only for LINEAGE
+            // claims — a cwd-fallback label points at someone else's pane.
+            selectedSession && sidebarSharedProps.liveSessionLineage.has(selectedSession.id)
+              ? (sidebarSharedProps.liveSessionNames.get(selectedSession.id) ?? null)
+              : null
+          }
           liveSessionModel={selectedSession ? (liveSessionModels.get(selectedSession.id) ?? null) : null}
           activeTab={activeTab}
           setActiveTab={setActiveTab}

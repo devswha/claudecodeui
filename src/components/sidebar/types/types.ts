@@ -45,6 +45,8 @@ export type SidebarProps = {
   attentionSessionIds: ReadonlySet<string>;
   liveSessionIds: ReadonlySet<string>;
   liveSessionNames: ReadonlyMap<string, string>;
+  // Ids whose tmux name is a lineage claim — the only rows allowed tmux actions.
+  liveSessionLineage: ReadonlySet<string>;
   onProjectSelect: (project: Project) => void;
   onSessionSelect: (session: ProjectSession) => void;
   onNewSession: (project: Project) => void;
