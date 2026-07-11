@@ -602,6 +602,25 @@ router.get(
   }),
 );
 
+/**
+ * Server-side lineage gate for tmux-destructive/injective actions (kill, send).
+ * The client hides these controls for non-lineage rows, but a stale UI snapshot
+ * or a direct authenticated request could still target a tmux session that no
+ * gjc provably runs inside (실사고: patina — cwd-label row killed an unrelated
+ * claude tmux). Fail-closed: transient lsof misses deny the action; retrying
+ * once detection recovers is the intended UX for a destructive operation.
+ */
+async function assertLineageTmuxName(tmuxName: string): Promise<void> {
+  const live = await getLiveGjcSessions();
+  const allowed = live.some((session) => session.tmuxName === tmuxName && session.claim === 'lineage');
+  if (!allowed) {
+    throw new AppError('tmux 세션에 대한 조작이 거부되었습니다 — gjc가 그 세션 안에서 실행 중임이 확인될 때만 허용됩니다.', {
+      code: 'TMUX_ACTION_NOT_LINEAGE',
+      statusCode: 403,
+    });
+  }
+}
+
 router.post(
   '/sessions/live/send',
   asyncHandler(async (req: Request, res: Response) => {
@@ -614,6 +633,7 @@ router.post(
     if (!message.trim()) {
       throw new AppError('message is required.', { code: 'EMPTY_MESSAGE', statusCode: 400 });
     }
+    await assertLineageTmuxName(body.tmuxName);
     const result = await sendToLiveSession(body.tmuxName, message);
     res.json(createApiSuccessResponse(result));
   }),
@@ -645,6 +665,7 @@ router.post(
     if (!isValidTmuxName(body.tmuxName)) {
       throw new AppError('A valid tmuxName is required.', { code: 'INVALID_TMUX_NAME', statusCode: 400 });
     }
+    await assertLineageTmuxName(body.tmuxName);
     const result = await killLiveSession(body.tmuxName);
     res.json(createApiSuccessResponse(result));
   }),

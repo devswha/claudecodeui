@@ -309,14 +309,23 @@ async function readLastModelFromFile(path: string): Promise<string | null> {
       return next.model;
     }
 
+    // Cold scan: parse only up to the last COMPLETE line, and remember that
+    // boundary — otherwise a model_change being written mid-scan would land in
+    // the skipped partial tail and never be re-read (리뷰 지적 반영).
+    let parseEnd = size;
+    if (size > 0) {
+      const tail = await readRange(path, Math.max(0, size - MODEL_SCAN_WINDOW_BYTES), size);
+      const lastNewline = tail.lastIndexOf(0x0a);
+      parseEnd = lastNewline < 0 ? 0 : Math.max(0, size - tail.length) + lastNewline + 1;
+    }
     let model: string | null = null;
-    let end = size;
+    let end = parseEnd;
     while (end > 0 && model === null) {
       const start = Math.max(0, end - MODEL_SCAN_WINDOW_BYTES);
       model = parseLastModelChange((await readRange(path, start, end)).toString('utf8'));
       end = start === 0 ? 0 : start + MODEL_SCAN_OVERLAP_BYTES;
     }
-    modelCache.set(path, { scannedTo: size, model });
+    modelCache.set(path, { scannedTo: parseEnd, model });
     return model;
   } catch {
     return null;
