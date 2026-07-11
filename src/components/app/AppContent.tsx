@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 
@@ -12,6 +12,7 @@ import { useSessionProtection } from '../../hooks/useSessionProtection';
 import { useProjectsState } from '../../hooks/useProjectsState';
 import { useQueuedMessageAutoSend } from '../../hooks/useQueuedMessageAutoSend';
 import { api } from '../../utils/api';
+import type { ExternalTerminalTarget } from '../../types/app';
 
 type RunningSessionApiItem = {
   sessionId?: unknown;
@@ -84,6 +85,40 @@ function AppContentInner() {
     isMobile,
     activeSessions: processingSessions,
   });
+
+  // External CLI (claude/codex) tmux terminal shown in the main area. Lives
+  // here (not in useProjectsState) so the gjc session flow stays untouched;
+  // selecting any project/session or starting a new chat clears it via the
+  // wrapped sidebar handlers below.
+  const [externalTerminal, setExternalTerminal] = useState<ExternalTerminalTarget | null>(null);
+
+  const openExternalTerminal = useCallback((target: ExternalTerminalTarget) => {
+    setExternalTerminal(target);
+    setSidebarOpen(false);
+  }, [setSidebarOpen]);
+
+  const closeExternalTerminal = useCallback(() => {
+    setExternalTerminal(null);
+  }, []);
+
+  // Wrap navigation-ish sidebar handlers so leaving for a session/project/new
+  // chat drops the terminal takeover — without modifying the originals.
+  const sidebarProps = useMemo(() => ({
+    ...sidebarSharedProps,
+    onProjectSelect: (...args: Parameters<typeof sidebarSharedProps.onProjectSelect>) => {
+      setExternalTerminal(null);
+      return sidebarSharedProps.onProjectSelect(...args);
+    },
+    onSessionSelect: (...args: Parameters<typeof sidebarSharedProps.onSessionSelect>) => {
+      setExternalTerminal(null);
+      return sidebarSharedProps.onSessionSelect(...args);
+    },
+    onNewSession: (...args: Parameters<typeof sidebarSharedProps.onNewSession>) => {
+      setExternalTerminal(null);
+      return sidebarSharedProps.onNewSession(...args);
+    },
+    onExternalTerminalOpen: openExternalTerminal,
+  }), [sidebarSharedProps, openExternalTerminal]);
 
   // Queued messages for sessions that finish while another session (or none)
   // is being viewed are sent from here; the viewed session's composer handles
@@ -159,6 +194,7 @@ function AppContentInner() {
         localStorage.setItem('selected-provider', message.provider);
       }
 
+      setExternalTerminal(null);
       setActiveTab('chat');
       setSidebarOpen(false);
       void refreshProjectsSilently();
@@ -206,7 +242,7 @@ function AppContentInner() {
     <div className="fixed inset-0 flex bg-background" style={{ bottom: 'var(--keyboard-height, 0px)' }}>
       {!isMobile ? (
         <div className="h-full flex-shrink-0 border-r border-border/50">
-          <Sidebar {...sidebarSharedProps} />
+          <Sidebar {...sidebarProps} />
         </div>
       ) : (
         <div
@@ -232,7 +268,7 @@ function AppContentInner() {
             onClick={(event) => event.stopPropagation()}
             onTouchStart={(event) => event.stopPropagation()}
           >
-            <Sidebar {...sidebarSharedProps} />
+            <Sidebar {...sidebarProps} />
           </div>
         </div>
       )}
@@ -263,14 +299,22 @@ function AppContentInner() {
           onShowSettings={openSettings}
           externalMessageUpdate={externalMessageUpdate}
           newSessionTrigger={newSessionTrigger}
+          externalTerminal={externalTerminal}
+          onExternalTerminalClose={closeExternalTerminal}
         />
       </div>
 
       <CommandPalette
         selectedProject={selectedProject}
-        onStartNewChat={handleNewSession}
+        onStartNewChat={(...args: Parameters<typeof handleNewSession>) => {
+          setExternalTerminal(null);
+          return handleNewSession(...args);
+        }}
         onOpenSettings={() => openSettings()}
-        onShowTab={setActiveTab}
+        onShowTab={(tab: Parameters<typeof setActiveTab>[0]) => {
+          setExternalTerminal(null);
+          setActiveTab(tab);
+        }}
       />
     </div>
   );

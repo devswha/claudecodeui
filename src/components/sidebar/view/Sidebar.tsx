@@ -43,6 +43,7 @@ function Sidebar({
   settingsInitialTab,
   onCloseSettings,
   isMobile,
+  onExternalTerminalOpen,
 }: SidebarProps) {
   const { t } = useTranslation(['sidebar', 'common']);
   const { isPWA } = useDeviceSettings({ trackMobile: false });
@@ -310,6 +311,7 @@ function Sidebar({
             onShowSettings={onShowSettings}
             projectListProps={projectListProps}
             liveSessionNames={liveSessionNames}
+            onExternalTerminalOpen={onExternalTerminalOpen}
             t={t}
           />
         </>

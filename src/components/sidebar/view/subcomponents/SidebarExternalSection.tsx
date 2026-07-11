@@ -1,15 +1,15 @@
 import { useEffect, useState } from 'react';
 import { SquareTerminal } from 'lucide-react';
 
-import type { Project } from '../../../../types/app';
+import type { ExternalTerminalTarget, Project } from '../../../../types/app';
 import { api } from '../../../../utils/api';
-
-import TerminalAttachModal from './TerminalAttachModal';
 
 type ExternalCliSession = { tmuxName: string; kind: 'claude' | 'codex' };
 
 type SidebarExternalSectionProps = {
   projects: Project[];
+  /** Opens the session as a full main-area terminal (like gjc sessions do). */
+  onOpen: (target: ExternalTerminalTarget) => void;
 };
 
 const POLL_INTERVAL_MS = 10000;
@@ -25,16 +25,17 @@ const KIND_DOT: Record<ExternalCliSession['kind'], string> = {
 };
 
 /**
- * "외부 CLI" subsection of the 작동 중 tab: claude/codex tmux sessions, each
- * openable as a live terminal (Termius-style attach via TerminalAttachModal).
+ * "외부 CLI" subsection of the 작동 중 tab: claude/codex tmux sessions. A row
+ * click hands the target to the app shell, which renders it as a full
+ * main-area terminal (Termius-style attach) — mirroring how gjc sessions
+ * fill the right side.
  *
  * Fully self-contained (own 10s poll of /sessions/external) so the gjc live
  * lane — SidebarLiveSection, useProjectsState's live poll — is untouched.
  * gjc sessions are excluded server-side. Renders nothing when nothing matches.
  */
-export default function SidebarExternalSection({ projects }: SidebarExternalSectionProps) {
+export default function SidebarExternalSection({ projects, onOpen }: SidebarExternalSectionProps) {
   const [sessions, setSessions] = useState<ExternalCliSession[]>([]);
-  const [attached, setAttached] = useState<ExternalCliSession | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -77,7 +78,7 @@ export default function SidebarExternalSection({ projects }: SidebarExternalSect
           <button
             key={session.tmuxName}
             type="button"
-            onClick={() => setAttached(session)}
+            onClick={() => onOpen({ tmuxName: session.tmuxName, kind: KIND_LABEL[session.kind], project: shellProject })}
             title={`tmux 세션 '${session.tmuxName}' 터미널로 보기`}
             className="flex w-full items-start rounded-md px-2 py-1.5 text-left transition-colors hover:bg-muted/50"
           >
@@ -92,13 +93,6 @@ export default function SidebarExternalSection({ projects }: SidebarExternalSect
           </button>
         ))}
       </div>
-      <TerminalAttachModal
-        isOpen={attached !== null}
-        tmuxName={attached?.tmuxName ?? null}
-        kind={attached ? KIND_LABEL[attached.kind] : null}
-        project={shellProject}
-        onClose={() => setAttached(null)}
-      />
     </div>
   );
 }

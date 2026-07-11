@@ -3,7 +3,7 @@ import { Activity, Archive, Folder, MessageSquare, RotateCcw, Search, Trash2 } f
 import type { TFunction } from 'i18next';
 
 import { ScrollArea } from '../../../../shared/view/ui';
-import type { Project } from '../../../../types/app';
+import type { ExternalTerminalTarget, Project } from '../../../../types/app';
 import type { ReleaseInfo } from '../../../../types/sharedTypes';
 import type { ConversationSearchResults, SearchProgress } from '../../hooks/useSidebarController';
 import type { ArchivedProjectListItem, ArchivedSessionListItem, SidebarSearchMode } from '../../types/types';
@@ -152,6 +152,7 @@ type SidebarContentProps = {
   onShowSettings: () => void;
   projectListProps: SidebarProjectListProps;
   liveSessionNames: ReadonlyMap<string, string>;
+  onExternalTerminalOpen: (target: ExternalTerminalTarget) => void;
   t: TFunction;
 };
 
@@ -191,6 +192,7 @@ export default function SidebarContent({
   onShowSettings,
   projectListProps,
   liveSessionNames,
+  onExternalTerminalOpen,
   t,
 }: SidebarContentProps) {
   const [topTab, setTopTab] = useState<'live' | 'archive'>('live');
@@ -266,7 +268,7 @@ export default function SidebarContent({
               liveSessionNames={liveSessionNames}
             />
           )}
-          <SidebarExternalSection projects={projects} />
+          <SidebarExternalSection projects={projects} onOpen={onExternalTerminalOpen} />
         </ScrollArea>
       ) : (
       <ScrollArea className="flex-1 overflow-y-auto overscroll-contain md:px-1.5 md:py-2">

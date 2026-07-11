@@ -1,6 +1,6 @@
 import type { Dispatch, SetStateAction } from 'react';
 
-import type { AppTab, Project, ProjectSession } from '../../../types/app';
+import type { AppTab, ExternalTerminalTarget, Project, ProjectSession } from '../../../types/app';
 import type {
   MarkSessionIdle,
   MarkSessionProcessing,
@@ -59,6 +59,9 @@ export type MainContentProps = {
   onShowSettings: (tab?: SettingsMainTab) => void;
   externalMessageUpdate: number;
   newSessionTrigger: number;
+  // External CLI (claude/codex) tmux terminal shown as the full main area.
+  externalTerminal: ExternalTerminalTarget | null;
+  onExternalTerminalClose: () => void;
 };
 
 export type MainContentHeaderProps = {
