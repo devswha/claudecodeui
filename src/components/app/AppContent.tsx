@@ -65,6 +65,7 @@ function AppContentInner() {
   const {
     selectedProject,
     selectedSession,
+    liveSessionModels,
     activeTab,
     sidebarOpen,
     isLoadingProjects,
@@ -279,6 +280,7 @@ function AppContentInner() {
           selectedSession={selectedSession}
           isSessionReadOnly={Boolean(selectedSession && sidebarSharedProps.liveSessionIds.has(selectedSession.id))}
           liveSessionTmuxName={selectedSession ? (sidebarSharedProps.liveSessionNames.get(selectedSession.id) ?? null) : null}
+          liveSessionModel={selectedSession ? (liveSessionModels.get(selectedSession.id) ?? null) : null}
           activeTab={activeTab}
           setActiveTab={setActiveTab}
           ws={ws}

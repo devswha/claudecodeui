@@ -23,6 +23,7 @@ function ChatInterface({
   selectedSession,
   isSessionReadOnly,
   liveSessionTmuxName,
+  liveSessionModel,
   ws,
   sendMessage,
   onFileOpen,
@@ -404,7 +405,7 @@ function ChatInterface({
 
           {isSessionReadOnly ? (
             liveSessionTmuxName ? (
-              <LiveRelayComposer tmuxName={liveSessionTmuxName} />
+              <LiveRelayComposer tmuxName={liveSessionTmuxName} model={liveSessionModel} />
             ) : (
               <div className="chat-composer-shell relative flex-shrink-0 px-2 pb-3 pt-2 sm:px-4">
                 <div className="mx-auto flex max-w-[54.25rem] items-center gap-2 rounded-xl border border-blue-500/30 bg-blue-500/10 px-4 py-3 text-sm text-blue-700 dark:text-blue-300">

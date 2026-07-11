@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { readFile, realpath } from 'node:fs/promises';
+import { open, readFile, realpath, stat } from 'node:fs/promises';
 
 /**
  * Live gjc session detection + tmux-session naming.
@@ -23,7 +23,7 @@ const SESSIONS_SEGMENT = '.gjc/agent/sessions';
 const SESSION_FILE_RE = /\.gjc\/agent\/sessions\/[^/]+\/[^/]*_([0-9a-fA-F][0-9a-fA-F-]{7,})\.jsonl\b/;
 const TMUX_FIELD_SEP = '\t';
 
-export type LiveGjcSession = { id: string; tmuxName: string | null };
+export type LiveGjcSession = { id: string; tmuxName: string | null; model: string | null };
 
 /** True when `tmux list-panes` reported at least one pane (a tmux server is up). */
 export function tmuxHasPanes(output: string): boolean {
@@ -92,7 +92,7 @@ export function computeLiveSessions(args: {
   tmuxPresent: boolean;
   panes: Array<{ name: string; pid: number; cwd: string }>;
   sessions: Array<{ id: string; pidChain: number[]; cwd: string | null }>;
-}): LiveGjcSession[] {
+}): Array<Pick<LiveGjcSession, 'id' | 'tmuxName'>> {
   if (!args.tmuxPresent) {
     return [];
   }
@@ -217,6 +217,99 @@ async function buildPidChain(pid: number): Promise<number[]> {
   return chain;
 }
 
+/** Maps session id → transcript path from lsof `n` lines (first path wins). */
+export function extractSessionPathsFromLsof(output: string): Map<string, string> {
+  const paths = new Map<string, string>();
+  for (const raw of output.split(/\r?\n/)) {
+    if (!raw.startsWith('n') || !raw.includes(SESSIONS_SEGMENT)) {
+      continue;
+    }
+    const match = SESSION_FILE_RE.exec(raw);
+    if (match && !paths.has(match[1])) {
+      paths.set(match[1], raw.slice(1));
+    }
+  }
+  return paths;
+}
+
+/** Last `model_change` model in a transcript tail (NDJSON lines, scanned backwards). */
+export function parseLastModelChange(tailText: string): string | null {
+  const lines = tailText.split(/\r?\n/);
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    if (!lines[i].includes('"model_change"')) {
+      continue;
+    }
+    try {
+      const entry = JSON.parse(lines[i]) as { type?: unknown; model?: unknown };
+      if (entry.type === 'model_change' && typeof entry.model === 'string' && entry.model) {
+        return entry.model;
+      }
+    } catch {
+      // partial first line of the tail window — keep scanning
+    }
+  }
+  return null;
+}
+
+const MODEL_SCAN_WINDOW_BYTES = 512 * 1024;
+const MODEL_SCAN_OVERLAP_BYTES = 2 * 1024;
+
+/**
+ * Per-transcript incremental model cache. A session's model_change usually sits
+ * near the START of a (potentially huge, append-only) transcript, so a fixed
+ * tail read misses it. First sight does a windowed BACKWARD scan (with a small
+ * overlap so a line split across windows is still seen); afterwards only the
+ * appended delta is read per poll. A shrunken/rotated file triggers a rescan.
+ */
+const modelCache = new Map<string, { scannedTo: number; model: string | null }>();
+
+async function readRange(path: string, start: number, end: number): Promise<Buffer> {
+  const handle = await open(path, 'r');
+  try {
+    const buffer = Buffer.alloc(end - start);
+    await handle.read(buffer, 0, buffer.length, start);
+    return buffer;
+  } finally {
+    await handle.close();
+  }
+}
+
+/** Reads the session's current model from the transcript. null on any failure. */
+async function readLastModelFromFile(path: string): Promise<string | null> {
+  try {
+    const { size } = await stat(path);
+    const cached = modelCache.get(path);
+    if (cached && size >= cached.scannedTo) {
+      if (size === cached.scannedTo) {
+        return cached.model;
+      }
+      // Only the appended delta. Parse up to the last COMPLETE line so a
+      // mid-write entry is re-read next poll instead of being lost.
+      const delta = await readRange(path, cached.scannedTo, size);
+      const lastNewline = delta.lastIndexOf(0x0a);
+      if (lastNewline < 0) {
+        return cached.model;
+      }
+      const found = parseLastModelChange(delta.subarray(0, lastNewline + 1).toString('utf8'));
+      const next = { scannedTo: cached.scannedTo + lastNewline + 1, model: found ?? cached.model };
+      modelCache.set(path, next);
+      return next.model;
+    }
+
+    let model: string | null = null;
+    let end = size;
+    while (end > 0 && model === null) {
+      const start = Math.max(0, end - MODEL_SCAN_WINDOW_BYTES);
+      model = parseLastModelChange((await readRange(path, start, end)).toString('utf8'));
+      end = start === 0 ? 0 : start + MODEL_SCAN_OVERLAP_BYTES;
+    }
+    modelCache.set(path, { scannedTo: size, model });
+    return model;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Returns live gjc sessions with their tmux session name. Empty on any failure
  * (no tmux/lsof, spawn error) — tmux/lsof/proc dependence is confined here.
@@ -251,7 +344,15 @@ export async function getLiveGjcSessions(): Promise<LiveGjcSession[]> {
     });
   }
 
-  return computeLiveSessions({ tmuxPresent: true, panes, sessions });
+  const sessionPaths = extractSessionPathsFromLsof(lsofOutput);
+  const named = computeLiveSessions({ tmuxPresent: true, panes, sessions });
+  // Enrich with the current model (last model_change in the transcript tail).
+  return Promise.all(
+    named.map(async (session) => {
+      const path = sessionPaths.get(session.id);
+      return { ...session, model: path ? await readLastModelFromFile(path) : null };
+    }),
+  );
 }
 
 /** Backward-compatible id-only view. */

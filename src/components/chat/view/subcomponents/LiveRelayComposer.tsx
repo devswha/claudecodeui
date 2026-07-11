@@ -14,8 +14,12 @@ type RelayStatus =
  * conversation — it relays the message to the control tower's /send (via the
  * server proxy), which owns outbox/queueing + injection + verification. Shows
  * delivered / queued / error feedback based on the tower's response.
+ *
+ * The status line leads with the session's CURRENT MODEL (from the gjc
+ * transcript's last model_change, threaded through the live poll) — the tmux
+ * name stays as a muted suffix so the send target remains identifiable.
  */
-export default function LiveRelayComposer({ tmuxName }: { tmuxName: string }) {
+export default function LiveRelayComposer({ tmuxName, model = null }: { tmuxName: string; model?: string | null }) {
   const [input, setInput] = useState('');
   const [status, setStatus] = useState<RelayStatus>({ kind: 'idle' });
 
@@ -48,7 +52,14 @@ export default function LiveRelayComposer({ tmuxName }: { tmuxName: string }) {
       <div className="mx-auto max-w-[54.25rem] space-y-1.5">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-blue-600 dark:text-blue-400">
           <span className="inline-flex h-1.5 w-1.5 animate-pulse rounded-full bg-blue-500" aria-hidden />
-          <span>tmux 세션 <span className="font-semibold">{tmuxName}</span>로 전송 (관제탑 경유)</span>
+          {model ? (
+            <span>
+              <span className="font-semibold">{model.split('/').pop()}</span>
+              <span className="text-muted-foreground"> · {tmuxName}</span>
+            </span>
+          ) : (
+            <span><span className="font-semibold">{tmuxName}</span> 세션</span>
+          )}
           {status.kind !== 'idle' && status.kind !== 'sending' && (
             <span className={status.kind === 'error' ? 'text-red-500' : 'text-muted-foreground'}>· {status.text}</span>
           )}

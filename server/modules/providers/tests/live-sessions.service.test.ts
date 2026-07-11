@@ -3,6 +3,8 @@ import test from 'node:test';
 
 import {
   computeLiveSessions,
+  extractSessionPathsFromLsof,
+  parseLastModelChange,
   parseLsofPidSessions,
   parseTmuxPanes,
   tmuxHasPanes,
@@ -142,4 +144,45 @@ test('computeLiveSessions returns empty when no tmux (graceful degradation)', ()
     computeLiveSessions({ tmuxPresent: false, panes: [], sessions: [{ id: 'a', pidChain: [1], cwd: '/x' }] }),
     [],
   );
+});
+
+test('extractSessionPathsFromLsof maps session id → transcript path (first path wins)', () => {
+  const lsof = [
+    'p3304033',
+    'n/home/devswha/.gjc/agent/sessions/-workspace-patina/2026-07-09T11-22-59-921Z_019f469d-e1d1-7000-a9aa-a942784b0e2b.jsonl',
+    'n/home/devswha/.gjc/agent/logs/app.log',
+    'p999',
+    // Same session held by a second process (worker): first path is kept.
+    'n/home/devswha/.cloudcli-home/.gjc/agent/sessions/-workspace-patina/2026-07-09T11-22-59-921Z_019f469d-e1d1-7000-a9aa-a942784b0e2b.jsonl',
+  ].join('\n');
+  const paths = extractSessionPathsFromLsof(lsof);
+  assert.equal(paths.size, 1);
+  assert.equal(
+    paths.get('019f469d-e1d1-7000-a9aa-a942784b0e2b'),
+    '/home/devswha/.gjc/agent/sessions/-workspace-patina/2026-07-09T11-22-59-921Z_019f469d-e1d1-7000-a9aa-a942784b0e2b.jsonl',
+  );
+});
+
+test('parseLastModelChange returns the LAST model_change in the tail', () => {
+  const tail = [
+    '{"type":"model_change","id":"a","model":"anthropic/claude-opus-4-8"}',
+    '{"type":"message","message":{"role":"user"}}',
+    '{"type":"model_change","id":"b","model":"anthropic/claude-fable-5"}',
+    '{"type":"message","message":{"role":"assistant"}}',
+  ].join('\n');
+  assert.equal(parseLastModelChange(tail), 'anthropic/claude-fable-5');
+});
+
+test('parseLastModelChange skips a truncated first line and malformed entries', () => {
+  const tail = [
+    'del","id":"x","model":"anthropic/broken"}', // cut by the tail window
+    '{"type":"model_change","model":"openai-codex/gpt-5.5"}',
+    'not-json "model_change" garbage',
+  ].join('\n');
+  assert.equal(parseLastModelChange(tail), 'openai-codex/gpt-5.5');
+});
+
+test('parseLastModelChange returns null when no model_change is present', () => {
+  assert.equal(parseLastModelChange('{"type":"message"}\n{"type":"turn_end"}'), null);
+  assert.equal(parseLastModelChange(''), null);
 });
