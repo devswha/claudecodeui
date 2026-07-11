@@ -178,6 +178,10 @@ function MainContent({
         <div className="min-h-0 flex-1 overflow-hidden">
           {safeName && (
             <StandaloneShell
+              // key: switching targets must remount the Shell — its websocket
+              // does NOT reconnect when only initialCommand changes, so without
+              // this the previous session's terminal keeps showing (stock→test).
+              key={safeName}
               project={externalTerminal.project}
               command={`tmux attach-session -t '=${safeName}'`}
               isActive
