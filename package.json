@@ -1,7 +1,7 @@
 {
   "name": "@cloudcli-ai/cloudcli",
   "version": "1.36.1",
-  "desktopVersion": "0.1.2",
+  "desktopVersion": "0.2.0",
   "productName": "GajaeCode",
   "description": "A web-based UI for Claude Code CLI",
   "type": "module",
