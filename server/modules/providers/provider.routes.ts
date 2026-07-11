@@ -573,33 +573,19 @@ router.get(
   }),
 );
 
-// The gjc live lookup (lsof-based, 4s timeout) can transiently return [] on a
-// busy host. Subtracting with that empty set would leak gjc-owned tmux names
-// (e.g. a cwd-fallback claim like patina) into the external lane for one poll
-// and blink the UI. Keep the last non-empty name set briefly as a fallback.
-const GJC_NAMES_FALLBACK_TTL_MS = 60_000;
-let lastGjcTmuxNames: { names: ReadonlySet<string>; at: number } = { names: new Set(), at: 0 };
-
 router.get(
   '/sessions/external',
   asyncHandler(async (_req: Request, res: Response) => {
     // External CLI (claude/codex) tmux sessions for the Termius-style terminal
-    // lane. gjc sessions are excluded by contract — they live in /sessions/live.
-    // Two layers: the service drops sessions with a gjc process in a pane
-    // subtree; here we also subtract tmux names the gjc live lane claimed via
-    // its cwd fallback (a gjc holder OUTSIDE the pane tree — 실측: patina).
-    const [externalAll, liveGjc] = await Promise.all([getExternalCliSessions(), getLiveGjcSessions()]);
-    const currentNames = new Set(
-      liveGjc.map((session) => session.tmuxName).filter((name): name is string => Boolean(name)),
-    );
-    if (currentNames.size > 0) {
-      lastGjcTmuxNames = { names: currentNames, at: Date.now() };
-    }
-    const gjcNames =
-      currentNames.size > 0 || Date.now() - lastGjcTmuxNames.at >= GJC_NAMES_FALLBACK_TTL_MS
-        ? currentNames
-        : lastGjcTmuxNames.names;
-    const externalSessions = externalAll.filter((session) => !gjcNames.has(session.tmuxName));
+    // lane. A tmux session is excluded only when a gjc process actually runs
+    // INSIDE one of its panes (service-level subtree check). We deliberately do
+    // NOT subtract tmux names the gjc live lane claimed via its cwd fallback:
+    // a background gjc merely sharing the cwd (실측: patina — pane runs claude,
+    // a detached gjc from days ago shares the directory) must not hide the
+    // pane's real claude/codex session from this lane. Such a name may then
+    // legitimately appear in BOTH tabs — a gjc conversation row and an
+    // attachable terminal row are different, both-true views.
+    const externalSessions = await getExternalCliSessions();
     res.json(createApiSuccessResponse({ externalSessions }));
   }),
 );
