@@ -2,10 +2,8 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Menu, SquareTerminal, X } from 'lucide-react';
 
 import ChatInterface from '../../chat/view/ChatInterface';
-import FileTree from '../../file-tree/view/FileTree';
-import StandaloneShell from '../../standalone-shell/view/StandaloneShell';
-import GitPanel from '../../git-panel/view/GitPanel';
 import PluginTabContent from '../../plugins/view/PluginTabContent';
+import StandaloneShell from '../../standalone-shell/view/StandaloneShell';
 import { BrowserUsePanel } from '../../browser-use';
 import type { MainContentProps } from '../types/types';
 import { useTaskMaster } from '../../../contexts/TaskMasterContext';
@@ -21,6 +19,7 @@ import { TaskMasterPanel } from '../../task-master';
 
 import MainContentHeader from './subcomponents/MainContentHeader';
 import MainContentStateView from './subcomponents/MainContentStateView';
+import FilesPanel from './subcomponents/FilesPanel';
 import ErrorBoundary from './ErrorBoundary';
 
 type TaskMasterContextValue = {
@@ -65,6 +64,21 @@ function MainContent({
   const { currentProject, setCurrentProject } = useTaskMaster() as TaskMasterContextValue;
   const { tasksEnabled, isTaskMasterInstalled } = useTasksSettings() as TasksSettingsContextValue;
   const [browserUseEnabled, setBrowserUseEnabled] = useState(false);
+  const [filesPanelOpen, setFilesPanelOpen] = useState(() => {
+    try {
+      return localStorage.getItem('files-panel-open') === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('files-panel-open', String(filesPanelOpen));
+    } catch {
+      // storage errors are non-fatal
+    }
+  }, [filesPanelOpen]);
 
   const shouldShowTasksTab = Boolean(tasksEnabled && isTaskMasterInstalled);
   const shouldShowBrowserTab = browserUseEnabled;
@@ -104,6 +118,14 @@ function MainContent({
       setActiveTab('chat');
     }
   }, [shouldShowTasksTab, activeTab, setActiveTab]);
+
+  useEffect(() => {
+    // Shell/Git/Files tabs were removed; a persisted selection would render a
+    // blank main area, so bounce it back to chat (Files lives in FilesPanel).
+    if (activeTab === 'shell' || activeTab === 'git' || activeTab === 'files') {
+      setActiveTab('chat');
+    }
+  }, [activeTab, setActiveTab]);
 
   const loadBrowserUseSettings = useCallback(async () => {
     try {
@@ -186,7 +208,10 @@ function MainContent({
               project={externalTerminal.project}
               command={`tmux attach-session -t '=${safeName}'`}
               isActive
-              showHeader={false}
+              // minimal: drop the Shell's own status bar ("New Session" +
+              // Disconnect/Restart) — our header above already names the
+              // target and closes the view; minimal also auto-connects.
+              minimal
               onComplete={() => onExternalTerminalClose()}
             />
           )}
@@ -210,6 +235,8 @@ function MainContent({
         shouldShowBrowserTab={shouldShowBrowserTab}
         isMobile={isMobile}
         onMenuClick={onMenuClick}
+        filesPanelOpen={filesPanelOpen}
+        onToggleFilesPanel={() => setFilesPanelOpen((previous) => !previous)}
       />
 
       <div className="flex min-h-0 flex-1 overflow-hidden">
@@ -242,28 +269,6 @@ function MainContent({
             </ErrorBoundary>
           </div>
 
-          {activeTab === 'files' && (
-            <div className="h-full overflow-hidden">
-              <FileTree selectedProject={selectedProject} onFileOpen={handleFileOpen} />
-            </div>
-          )}
-
-          {activeTab === 'shell' && (
-            <div className="h-full w-full overflow-hidden">
-              <StandaloneShell
-                project={selectedProject}
-                session={selectedSession}
-                showHeader={false}
-                isActive={activeTab === 'shell'}
-              />
-            </div>
-          )}
-
-          {activeTab === 'git' && (
-            <div className="h-full overflow-hidden">
-              <GitPanel selectedProject={selectedProject} isMobile={isMobile} onFileOpen={handleFileOpen} />
-            </div>
-          )}
 
           {shouldShowTasksTab && <TaskMasterPanel isVisible={activeTab === 'tasks'} />}
 
@@ -284,6 +289,15 @@ function MainContent({
           )}
         </div>
 
+        {filesPanelOpen && (
+          <div className="w-80 max-w-[85vw] flex-shrink-0 border-l border-border/60 bg-background md:w-72">
+            <FilesPanel
+              onFileOpen={(filePath, projectId) => handleFileOpen(filePath, null, { projectId })}
+              onClose={() => setFilesPanelOpen(false)}
+            />
+          </div>
+        )}
+
         <EditorSidebar
           editingFile={editingFile}
           isMobile={isMobile}
@@ -295,7 +309,7 @@ function MainContent({
           onCloseEditor={handleCloseEditor}
           onToggleEditorExpand={handleToggleEditorExpand}
           projectPath={selectedProject.path}
-          fillSpace={activeTab === 'files'}
+          fillSpace={false}
         />
       </div>
     </div>

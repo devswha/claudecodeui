@@ -331,7 +331,9 @@ const removeSessionFromProject = (project: Project, sessionIdToDelete: string): 
   return updatedProject;
 };
 
-const VALID_TABS: Set<string> = new Set(['chat', 'files', 'shell', 'git', 'tasks', 'browser']);
+// 'shell'/'git'/'files' were removed as tabs (Files is a side panel now);
+// persisted selections fall back to 'chat' via isValidTab.
+const VALID_TABS: Set<string> = new Set(['chat', 'tasks', 'browser']);
 
 const isValidTab = (tab: string): tab is AppTab => {
   return VALID_TABS.has(tab) || tab.startsWith('plugin:');

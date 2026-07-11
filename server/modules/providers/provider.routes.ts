@@ -9,6 +9,7 @@ import { sessionConversationsSearchService } from '@/modules/providers/services/
 import { sessionsService } from '@/modules/providers/services/sessions.service.js';
 import { getLiveGjcSessions } from '@/modules/providers/services/live-sessions.service.js';
 import { getExternalCliSessions } from '@/modules/providers/services/external-cli-sessions.service.js';
+import { getHomeDir, getHomeDirSuggestions } from '@/modules/providers/services/home-dirs.service.js';
 import { isValidTmuxName, sendToLiveSession, isValidSpawnName, spawnLiveSession, killLiveSession } from '@/modules/providers/services/live-send.service.js';
 import type {
   LLMProvider,
@@ -587,6 +588,17 @@ router.get(
     // attachable terminal row are different, both-true views.
     const externalSessions = await getExternalCliSessions();
     res.json(createApiSuccessResponse({ externalSessions }));
+  }),
+);
+
+router.get(
+  '/fs/dir-suggestions',
+  asyncHandler(async (req: Request, res: Response) => {
+    // Home-relative directory autocomplete (spawn form cwd + files panel root).
+    // Read-only readdir under $HOME, traversal-guarded in the service.
+    const prefix = typeof req.query.prefix === 'string' ? req.query.prefix : '';
+    const suggestions = await getHomeDirSuggestions(prefix);
+    res.json(createApiSuccessResponse({ home: getHomeDir(), suggestions }));
   }),
 );
 

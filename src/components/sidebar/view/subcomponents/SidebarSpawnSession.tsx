@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Plus } from 'lucide-react';
 
 import { api } from '../../../../utils/api';
+import HomeDirInput from '../../../../shared/view/HomeDirInput';
 
 type SpawnStatus =
   | { kind: 'idle' }
@@ -42,9 +43,10 @@ export default function SidebarSpawnSession() {
         detail?: string;
       };
       if (response.ok && data.ok) {
-        setName('');
-        setCwd('');
-        setStatus({ kind: 'ok', text: '세션 생성됨 — 곧 목록에 표시됩니다' });
+        // Success closes the form (하코 요청) — the 5s live poll surfaces the
+        // new session in the list shortly after.
+        setOpen(false);
+        reset();
         return;
       }
       const text = data.reachable === false
@@ -82,17 +84,11 @@ export default function SidebarSpawnSession() {
         placeholder="세션 이름 (영숫자, 예: my-feature)"
         className="w-full rounded-md border border-border bg-transparent px-2 py-1.5 text-sm outline-none focus:border-blue-500/60"
       />
-      <input
+      <HomeDirInput
         value={cwd}
-        onChange={(event) => setCwd(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
-            event.preventDefault();
-            void spawn();
-          }
-        }}
+        onChange={setCwd}
+        onSubmit={() => void spawn()}
         placeholder="작업 폴더 (홈 하위, 예: workspace/my-proj)"
-        className="w-full rounded-md border border-border bg-transparent px-2 py-1.5 text-sm outline-none focus:border-blue-500/60"
       />
       {status.kind !== 'idle' && status.kind !== 'spawning' && (
         <p className={status.kind === 'error' ? 'text-[11px] text-red-500' : 'text-[11px] text-blue-600 dark:text-blue-400'}>

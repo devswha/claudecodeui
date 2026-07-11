@@ -74,6 +74,8 @@ export type MainContentHeaderProps = {
   shouldShowBrowserTab: boolean;
   isMobile: boolean;
   onMenuClick: () => void;
+  filesPanelOpen: boolean;
+  onToggleFilesPanel: () => void;
 };
 
 export type MainContentStateViewProps = {

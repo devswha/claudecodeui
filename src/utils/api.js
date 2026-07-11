@@ -89,6 +89,9 @@ export const api = {
     }),
   // External CLI (claude/codex) tmux sessions for the terminal-attach lane.
   externalSessions: () => authenticatedFetch('/api/providers/sessions/external'),
+  // Home-relative directory autocomplete ({ home, suggestions }).
+  dirSuggestions: (prefix) =>
+    authenticatedFetch(`/api/providers/fs/dir-suggestions?prefix=${encodeURIComponent(prefix)}`),
   projectSessions: (projectId, { limit = 20, offset = 0 } = {}) => {
     const params = new URLSearchParams();
     params.set('limit', String(limit));
