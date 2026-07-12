@@ -2,10 +2,13 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  buildPidChain,
   computeLiveSessions,
   extractSessionPathsFromLsof,
+  parseCwdByPidFromLsof,
   parseLastModelChange,
   parseLsofPidSessions,
+  parsePidParents,
   parseTmuxPanes,
   tmuxHasPanes,
 } from '@/modules/providers/services/live-sessions.service.js';
@@ -36,6 +39,39 @@ test('parseLsofPidSessions pairs uuid with holder pid, path-agnostic (decoy-HOME
   assert.deepEqual(parseLsofPidSessions(lsof), [
     { id: '019f469d-e1d1-7000-a9aa-a942784b0e2b', pid: 3304033 },
     { id: '019f46ad-51d2-7000-a5ea-facfd7f23f52', pid: 3436470 },
+  ]);
+});
+
+test('parsePidParents parses headerless `ps -eo pid=,ppid=` output (BSD right-aligned padding)', () => {
+  // macOS(BSD) ps pads columns with leading spaces; Linux(procps) output parses identically.
+  const parents = parsePidParents('    1     0\n89726 89725\n93770 93769\n\nnot a row\n');
+  assert.deepEqual([...parents], [[1, 0], [89726, 89725], [93770, 93769]]);
+});
+
+test('buildPidChain walks [pid, ppid, …] toward init from a ps snapshot', () => {
+  // 실측 macOS shape: bun(gjc) → zsh -c wrapper → tmux pane pid.
+  const parents = new Map([[93770, 93769], [93769, 93768], [93768, 1]]);
+  assert.deepEqual(buildPidChain(93770, parents), [93770, 93769, 93768]);
+  // unknown pid: chain is just the pid itself (lineage miss, not a crash)
+  assert.deepEqual(buildPidChain(555, new Map()), [555]);
+});
+
+test('buildPidChain is cycle-guarded (corrupt/racing ps snapshot cannot loop)', () => {
+  const parents = new Map([[10, 20], [20, 10]]);
+  assert.deepEqual(buildPidChain(10, parents), [10, 20]);
+});
+
+test('parseCwdByPidFromLsof maps pid → cwd (first path wins, spaces preserved)', () => {
+  const lsof = [
+    'p31394',
+    'n/Volumes/Data/Dev Workspace/lazy-dev-cli',
+    'p89726',
+    'n/tmp',
+    'nphantom-second-path',
+  ].join('\n');
+  assert.deepEqual([...parseCwdByPidFromLsof(lsof)], [
+    [31394, '/Volumes/Data/Dev Workspace/lazy-dev-cli'],
+    [89726, '/tmp'],
   ]);
 });
 
