@@ -7,7 +7,7 @@ import { providerModelsService } from '@/modules/providers/services/provider-mod
 import { providerSkillsService } from '@/modules/providers/services/skills.service.js';
 import { sessionConversationsSearchService } from '@/modules/providers/services/session-conversations-search.service.js';
 import { sessionsService } from '@/modules/providers/services/sessions.service.js';
-import { getLiveGjcSessions } from '@/modules/providers/services/live-sessions.service.js';
+import { getLiveGjcSessions, IDLE_GJC_ID_PREFIX } from '@/modules/providers/services/live-sessions.service.js';
 import { getExternalCliSessions } from '@/modules/providers/services/external-cli-sessions.service.js';
 import { getHomeDir, getHomeDirSuggestions } from '@/modules/providers/services/home-dirs.service.js';
 import { isValidTmuxName, sendToLiveSession, isValidSpawnName, spawnLiveSession, killLiveSession } from '@/modules/providers/services/live-send.service.js';
@@ -571,7 +571,11 @@ router.get(
     const liveSessions = await getLiveGjcSessions();
     res.json(createApiSuccessResponse({
       liveSessions,
-      liveSessionIds: liveSessions.map((session) => session.id),
+      // Legacy consumers treat these as transcript-backed session ids — keep
+      // synthetic idle-gjc rows out of this surface.
+      liveSessionIds: liveSessions
+        .filter((session) => !session.id.startsWith(IDLE_GJC_ID_PREFIX))
+        .map((session) => session.id),
     }));
   }),
 );

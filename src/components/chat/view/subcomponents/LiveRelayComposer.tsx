@@ -32,8 +32,11 @@ export default function LiveRelayComposer({ tmuxName, model = null }: { tmuxName
     try {
       const response = await api.liveSessionSend(tmuxName, message);
       const body = await response.json().catch(() => null);
-      const data = (body?.data ?? body ?? {}) as { reachable?: boolean; queued?: boolean; detail?: string };
-      if (!response.ok || data.reachable === false) {
+      const data = (body?.data ?? body ?? {}) as { ok?: boolean; reachable?: boolean; queued?: boolean; detail?: string };
+      // ok === false covers "tower reachable but refused/failed" (server wraps a
+      // tower non-2xx in HTTP 200) — without it a failed relay showed 전달됨 and
+      // silently discarded the draft.
+      if (!response.ok || data.reachable === false || data.ok === false) {
         setStatus({
           kind: 'error',
           text: data.reachable === false ? '관제탑 미가동 — 전송 불가' : data.detail || '전송 실패',
