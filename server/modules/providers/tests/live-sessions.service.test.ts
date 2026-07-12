@@ -16,6 +16,7 @@ import {
   parseTmuxPanes,
   tmuxHasPanes,
 } from '@/modules/providers/services/live-sessions.service.js';
+import { gjcPidsFromProcessRecords } from '@/modules/providers/services/external-cli-sessions.service.js';
 
 test('tmuxHasPanes detects a running tmux server (>=1 pane line)', () => {
   assert.equal(tmuxHasPanes('omg\t111\t/home/u/workspace/oh-my-gjc\n'), true);
@@ -370,4 +371,19 @@ test('findIdleGjcTmuxSessions: bun-wrapped gjc pane은 gjcPids 증거로 idle �
     excludedNames: new Set(),
   });
   assert.deepEqual(result, [{ name: 'test', sid: '$7' }]);
+});
+
+test('shared ps snapshot wiring: 3-column records feed gjc evidence correctly (감지 전멸 회귀 방지)', () => {
+  // Shape of the ONE `ps -eo pid=,ppid=,args=` snapshot the scan uses. Feeding
+  // this raw output into the 2-column parser made argv[0] the ppid digits and
+  // silently zeroed all detection — the exact regression this test pins.
+  const snapshot = [
+    ' 89726 89725 bun /Users/dev/.bun/bin/gjc',
+    ' 12001     1 vim /tmp/gjc',
+    ' 12002     1 node /opt/other/tool.js',
+    ' 12003 89726 bun /Volumes/Data/Dev Workspace/tools/gjc.js',
+  ].join('\n');
+  const records = parsePsProcessRecords(snapshot);
+  const pids = gjcPidsFromProcessRecords(records);
+  assert.deepEqual([...pids].sort((a, b) => a - b), [89726, 12003].sort((a, b) => a - b));
 });

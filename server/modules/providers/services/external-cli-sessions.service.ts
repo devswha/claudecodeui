@@ -117,12 +117,31 @@ function hasGjcArgvEvidence(commandLine: string): boolean {
   return firstArgument.startsWith('/') && /^\/.*\/gjc(?:\.js)?(?=\s|$)/.test(firstArgument);
 }
 
+/** Pids with gjc argv evidence from `ps -eo pid=,args=` (TWO-column) output. */
 export function parseGjcPidsFromPsArgs(output: string): Set<number> {
   const pids = new Set<number>();
   for (const raw of output.split(/\r?\n/)) {
     const match = /^\s*(\d+)\s+(.+)$/.exec(raw);
     if (match && hasGjcArgvEvidence(match[2].trim())) {
       pids.add(Number.parseInt(match[1], 10));
+    }
+  }
+  return pids;
+}
+
+/**
+ * Same evidence over already-parsed process records (pid + full command line).
+ * Use this with the shared `ps -eo pid=,ppid=,args=` snapshot — feeding that
+ * THREE-column raw output into `parseGjcPidsFromPsArgs` silently treats the
+ * ppid as argv[0] and finds nothing (실사고: 감지 전멸 회귀).
+ */
+export function gjcPidsFromProcessRecords(
+  records: ReadonlyArray<{ pid: number; args: string }>,
+): Set<number> {
+  const pids = new Set<number>();
+  for (const record of records) {
+    if (hasGjcArgvEvidence(record.args.trim())) {
+      pids.add(record.pid);
     }
   }
   return pids;

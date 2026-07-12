@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { open, realpath, stat } from 'node:fs/promises';
 
-import { parseGjcPidsFromPsArgs } from './external-cli-sessions.service.js';
+import { gjcPidsFromProcessRecords } from './external-cli-sessions.service.js';
 
 /**
  * Live gjc session detection + tmux-session naming.
@@ -578,7 +578,7 @@ async function scanLiveGjcSessions(): Promise<LiveGjcScanResult> {
   try {
     const psOutput = await runCommand('ps', ['-eo', 'pid=,ppid=,args=']);
     psRecords = parsePsProcessRecords(psOutput);
-    gjcPids = parseGjcPidsFromPsArgs(psOutput);
+    gjcPids = gjcPidsFromProcessRecords(psRecords);
   } catch {
     // fall through with no process evidence
   }
