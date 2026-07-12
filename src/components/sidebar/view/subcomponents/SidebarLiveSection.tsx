@@ -91,19 +91,28 @@ export default function SidebarLiveSection({
     return null;
   }
 
+  // This tab is a TMUX fleet roster: sessions with no tmux name (a gjc running
+  // in a plain terminal — Orca, mosh, bare zsh) are pure noise here since the
+  // web can neither relay nor kill them. They stay in liveSessionIds so the
+  // read-only banner and LIVE badges elsewhere keep protecting their
+  // transcripts; they are only hidden from this list (사용자 결정).
   const rows = projects.flatMap((project) =>
     getAllSessions(project)
-      .filter((session) => liveSessionIds.has(session.id) && !killedIds.has(session.id))
+      .filter((session) => liveSessionIds.has(session.id)
+        && liveSessionNames.has(session.id)
+        && !killedIds.has(session.id))
       .map((session) => ({ project, session })),
   );
 
   // Live ids whose session isn't in any *loaded* project page (pagination) still
   // deserve a row — otherwise whole live sessions silently vanish from the tab
   // (하코 관찰: horcrux/patina 라이브가 안 보임). They render with the tmux name
-  // (or a placeholder) and keep the kill control; selection needs the loaded
-  // session object, so they are not clickable until the session list loads them.
+  // and keep the kill control; selection needs the loaded session object, so
+  // they are not clickable until the session list loads them.
   const matchedIds = new Set(rows.map(({ session }) => session.id));
-  const orphans = [...liveSessionIds].filter((id) => !matchedIds.has(id) && !killedIds.has(id));
+  const orphans = [...liveSessionIds].filter((id) => !matchedIds.has(id)
+    && liveSessionNames.has(id)
+    && !killedIds.has(id));
 
   if (rows.length === 0 && orphans.length === 0) {
     return null;
@@ -220,6 +229,7 @@ export default function SidebarLiveSection({
         {rows.map(({ project, session }) => {
           const isSelected = selectedSession?.id === session.id;
           const title = session.summary || session.name || 'Session';
+          // rows filter guarantees a tmux name; title is demoted to the tooltip.
           const tmuxName = liveSessionNames.get(session.id);
           const primary = tmuxName ?? title;
           const age = formatAge(getSessionTime(session));
@@ -257,6 +267,9 @@ export default function SidebarLiveSection({
         })}
         {orphans.map((id) => {
           const tmuxName = liveSessionNames.get(id);
+          if (!tmuxName) {
+            return null; // orphans filter guarantees a name; TS narrowing only
+          }
           // Server-synthetic row: a gjc TUI runs in this tmux session but has no
           // transcript yet (gjc creates it at the FIRST message) — waiting, not live.
           const isIdle = id.startsWith('idle-gjc:');
@@ -277,7 +290,7 @@ export default function SidebarLiveSection({
                 {isIdle ? '대기' : 'LIVE'}
               </span>
               <span className="truncate text-sm font-medium text-foreground">
-                {tmuxName ?? '이름 미확인'}
+                {tmuxName}
               </span>
             </span>
           );

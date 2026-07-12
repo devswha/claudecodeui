@@ -43,7 +43,7 @@ test('SidebarLiveSection labels rows by tmux session name, title in tooltip', ()
   assert.ok(!html.includes('Idle conversation'), 'omits non-live sessions');
 });
 
-test('SidebarLiveSection falls back to the conversation title when tmux name is unknown', () => {
+test('SidebarLiveSection hides sessions with no tmux name (non-tmux gjc는 이 목록에서 제외)', () => {
   const html = renderToStaticMarkup(
     createElement(SidebarLiveSection, {
       projects: makeProjects(),
@@ -56,7 +56,7 @@ test('SidebarLiveSection falls back to the conversation title when tmux name is 
       onIdleSessionOpen: noop,
     }),
   );
-  assert.ok(html.includes('Live conversation title'), 'primary label falls back to the title');
+  assert.equal(html, '', 'a live session without a tmux name renders no row at all');
 });
 
 test('SidebarLiveSection renders nothing when no session is live', () => {
