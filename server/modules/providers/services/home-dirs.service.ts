@@ -133,12 +133,12 @@ export function parseExtraSpawnRoots(raw: string | undefined): string[] {
  *
  * Extra-root entries stay SHORT (bare relative names — the tower's
  * resolveSpawnCwd resolves $HOME first, then each root, so an unshadowed name
- * lands in the root exactly as displayed). Only when the same relative path
- * ALSO exists under $HOME does the entry switch to its ABSOLUTE form — the
- * bare string would silently spawn in $HOME instead of where the list showed
- * it (리뷰 반영), and full paths for everything drowned the dropdown in the
- * root prefix (실사용 피드백). Absolute prefixes are accepted (continuing to
- * type after picking a shadowed entry) and are contained to the extra roots.
+ * lands in the root exactly as displayed). When the same relative path ALSO
+ * exists under $HOME, the entry switches to the "<root basename>/rest" alias
+ * ("Dev Workspace/argus") that the tower resolves against the root's parent —
+ * still short, but unambiguous (리뷰 반영: bare collisions spawned in $HOME;
+ * 실사용 피드백: full absolute paths drowned the dropdown). Alias and absolute
+ * prefixes are both accepted for continued typing, contained to the roots.
  */
 export async function getSpawnDirSuggestions(
   prefix: string,
@@ -164,13 +164,26 @@ export async function getSpawnDirSuggestions(
     const homeReal = await safeRealpath(homeDir);
     for (const root of extraRoots) {
       const rootReal = await safeRealpath(root);
-      const entries = rootReal ? await suggestUnderBase(prefix, rootReal, [rootReal]) : [];
+      if (!rootReal) {
+        lanes.push([]);
+        continue;
+      }
+      // "<root basename>/rest" alias — short disambiguated form the tower
+      // resolves against the root's parent ("Dev Workspace/argus").
+      const alias = path.basename(rootReal);
+      if (prefix === alias || prefix.startsWith(`${alias}/`)) {
+        const rel = prefix === alias ? '' : prefix.slice(alias.length + 1);
+        const entries = await suggestUnderBase(rel, rootReal, [rootReal]);
+        lanes.push(entries.map((entry) => `${alias}/${entry}`));
+        continue;
+      }
+      const entries = await suggestUnderBase(prefix, rootReal, [rootReal]);
       const lane: string[] = [];
       for (const entry of entries) {
         // Shadow test mirrors the tower: would $HOME-first resolution hijack
-        // this bare name? Only then pay the absolute-path verbosity.
+        // this bare name? Only then pay the alias-prefixed form.
         const shadowed = homeReal !== null && (await safeRealpath(path.join(homeReal, entry))) !== null;
-        lane.push(shadowed ? `${rootReal}${path.sep}${entry}` : entry);
+        lane.push(shadowed ? `${alias}/${entry}` : entry);
       }
       lanes.push(lane);
     }
