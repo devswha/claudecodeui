@@ -68,3 +68,21 @@ test('SidebarLiveSection renders nothing when no session is live', () => {
   );
   assert.equal(html, '');
 });
+
+test('SidebarLiveSection renders idle-gjc rows as 대기 (첫 대화 전 gjc pane)', () => {
+  const html = renderToStaticMarkup(
+    createElement(SidebarLiveSection, {
+      projects: makeProjects(),
+      liveSessionIds: new Set(['idle-gjc:flask']),
+      liveSessionNames: new Map([['idle-gjc:flask', 'flask']]),
+      liveSessionLineage: new Set(['idle-gjc:flask']),
+      selectedSession: null,
+      onSessionSelect,
+    }),
+  );
+  assert.ok(html.includes('>flask<'), 'labels the row by tmux session name');
+  assert.ok(html.includes('대기'), 'idle rows carry the 대기 badge, not LIVE');
+  assert.ok(!html.includes('LIVE'), 'no LIVE badge for a session with no transcript');
+  assert.ok(html.includes('아직 대화가 없습니다'), 'explains why it is not openable yet');
+  assert.ok(html.includes('tmux 세션 flask 닫기'), 'lineage-grade idle rows keep the kill control');
+});

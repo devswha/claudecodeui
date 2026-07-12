@@ -4,6 +4,8 @@ import test from 'node:test';
 import {
   computeLiveSessions,
   extractSessionPathsFromLsof,
+  findIdleGjcTmuxSessions,
+  IDLE_GJC_ID_PREFIX,
   parseLastModelChange,
   parseLsofPidSessions,
   parseTmuxPanes,
@@ -186,4 +188,101 @@ test('parseLastModelChange skips a truncated first line and malformed entries', 
 test('parseLastModelChange returns null when no model_change is present', () => {
   assert.equal(parseLastModelChange('{"type":"message"}\n{"type":"turn_end"}'), null);
   assert.equal(parseLastModelChange(''), null);
+});
+
+// ─── findIdleGjcTmuxSessions (첫 대화 전 gjc pane 감지) ──────────────────────
+
+test('findIdleGjcTmuxSessions: gjc pane with no live claim surfaces (실측: 재시작 직후 flask)', () => {
+  // The pane command IS gjc but it has no open transcript → the lsof pipeline
+  // misses it entirely; the idle lane must still list the tmux session.
+  const result = findIdleGjcTmuxSessions({
+    panes: [{ name: 'flask', pid: 100 }],
+    procs: [{ pid: 100, ppid: 1, comm: 'gjc' }],
+    excludedNames: new Set(),
+  });
+  assert.deepEqual(result, ['flask']);
+});
+
+test('findIdleGjcTmuxSessions: gjc as a pane DESCENDANT counts (shell → gjc)', () => {
+  const result = findIdleGjcTmuxSessions({
+    panes: [{ name: 'omg3', pid: 200 }],
+    procs: [
+      { pid: 200, ppid: 1, comm: 'zsh' },
+      { pid: 201, ppid: 200, comm: 'gjc' },
+    ],
+    excludedNames: new Set(),
+  });
+  assert.deepEqual(result, ['omg3']);
+});
+
+test('findIdleGjcTmuxSessions: names claimed by a live row are excluded (one row per tmux)', () => {
+  const result = findIdleGjcTmuxSessions({
+    panes: [
+      { name: 'horcrux', pid: 300 },
+      { name: 'flask', pid: 400 },
+    ],
+    procs: [
+      { pid: 300, ppid: 1, comm: 'gjc' },
+      { pid: 400, ppid: 1, comm: 'gjc' },
+    ],
+    excludedNames: new Set(['horcrux']),
+  });
+  assert.deepEqual(result, ['flask']);
+});
+
+test('findIdleGjcTmuxSessions: non-gjc panes (claude/codex/ssh) never surface here', () => {
+  const result = findIdleGjcTmuxSessions({
+    panes: [
+      { name: 'patina', pid: 500 },
+      { name: 'test', pid: 600 },
+    ],
+    procs: [
+      { pid: 500, ppid: 1, comm: 'claude' },
+      { pid: 600, ppid: 1, comm: 'node' },
+      { pid: 601, ppid: 600, comm: 'codex' },
+    ],
+    excludedNames: new Set(),
+  });
+  assert.deepEqual(result, []);
+});
+
+test('findIdleGjcTmuxSessions: unsafe tmux names are dropped (kill/relay discipline)', () => {
+  const result = findIdleGjcTmuxSessions({
+    panes: [
+      { name: 'ok.name-1', pid: 700 },
+      { name: 'bad name;$(x)', pid: 800 },
+      { name: '-leading-dash', pid: 900 },
+    ],
+    procs: [
+      { pid: 700, ppid: 1, comm: 'gjc' },
+      { pid: 800, ppid: 1, comm: 'gjc' },
+      { pid: 900, ppid: 1, comm: 'gjc' },
+    ],
+    excludedNames: new Set(),
+  });
+  assert.deepEqual(result, ['ok.name-1']);
+});
+
+test('findIdleGjcTmuxSessions: sorted and deduped across multiple panes of one session', () => {
+  const result = findIdleGjcTmuxSessions({
+    panes: [
+      { name: 'zeta', pid: 1000 },
+      { name: 'alpha', pid: 1100 },
+      { name: 'zeta', pid: 1200 },
+    ],
+    procs: [
+      { pid: 1000, ppid: 1, comm: 'gjc' },
+      { pid: 1100, ppid: 1, comm: 'gjc' },
+      { pid: 1200, ppid: 1, comm: 'gjc' },
+    ],
+    excludedNames: new Set(),
+  });
+  assert.deepEqual(result, ['alpha', 'zeta']);
+});
+
+test('IDLE_GJC_ID_PREFIX cannot collide with transcript uuids (client contract)', () => {
+  // The client distinguishes idle rows by this prefix; a real session id is a
+  // uuid-ish token and can never start with it.
+  assert.equal(IDLE_GJC_ID_PREFIX, 'idle-gjc:');
+  assert.ok(!/^[0-9a-fA-F-]+$/.test(IDLE_GJC_ID_PREFIX));
 });

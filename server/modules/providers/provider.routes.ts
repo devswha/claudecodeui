@@ -565,7 +565,9 @@ router.get(
   '/sessions/live',
   asyncHandler(async (_req: Request, res: Response) => {
     // Sessions live in a tmux gjc pane, each with its tmux session name (tmux+lsof;
-    // empty if no tmux). liveSessionIds kept for backward compatibility.
+    // empty if no tmux). gjc panes with no transcript yet (first message pending)
+    // appear as synthetic `idle-gjc:<tmux name>` rows. liveSessionIds kept for
+    // backward compatibility.
     const liveSessions = await getLiveGjcSessions();
     res.json(createApiSuccessResponse({
       liveSessions,

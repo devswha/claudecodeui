@@ -233,21 +233,31 @@ export default function SidebarLiveSection({
         })}
         {orphans.map((id) => {
           const tmuxName = liveSessionNames.get(id);
+          // Server-synthetic row: a gjc TUI runs in this tmux session but has no
+          // transcript yet (gjc creates it at the FIRST message) — waiting, not live.
+          const isIdle = id.startsWith('idle-gjc:');
           return (
             <div key={id} className="rounded-md transition-colors hover:bg-muted/50">
               <div className="flex items-start">
                 <div className="flex min-w-0 flex-1 flex-col gap-0.5 px-2 py-1.5 text-left">
                   <span className="flex items-center gap-2">
-                    <span className="inline-flex h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-blue-500" aria-hidden />
-                    <span className="shrink-0 rounded bg-blue-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-blue-600 dark:text-blue-400">
-                      LIVE
+                    <span
+                      className={`inline-flex h-1.5 w-1.5 shrink-0 rounded-full ${isIdle ? 'bg-muted-foreground/50' : 'animate-pulse bg-blue-500'}`}
+                      aria-hidden
+                    />
+                    <span
+                      className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold ${isIdle ? 'bg-muted text-muted-foreground' : 'bg-blue-500/15 text-blue-600 dark:text-blue-400'}`}
+                    >
+                      {isIdle ? '대기' : 'LIVE'}
                     </span>
                     <span className="truncate text-sm font-medium text-foreground">
                       {tmuxName ?? '이름 미확인 세션'}
                     </span>
                   </span>
                   <span className="truncate pl-[1.375rem] text-[11px] text-muted-foreground">
-                    대화 미로딩 — 해당 프로젝트를 열면 제목이 표시됩니다
+                    {isIdle
+                      ? '아직 대화가 없습니다 — 첫 메시지 후 열람할 수 있습니다'
+                      : '대화 미로딩 — 해당 프로젝트를 열면 제목이 표시됩니다'}
                   </span>
                 </div>
                 {tmuxName && liveSessionLineage.has(id) && killButton(id, tmuxName)}
