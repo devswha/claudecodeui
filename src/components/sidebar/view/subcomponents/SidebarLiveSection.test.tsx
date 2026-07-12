@@ -34,6 +34,7 @@ test('SidebarLiveSection labels rows by tmux session name, title in tooltip', ()
       liveSessionTmuxIds: new Map([['s-live', '$1']]),
       selectedSession: null,
       onSessionSelect,
+      onIdleSessionOpen: noop,
     }),
   );
   assert.ok(html.includes('>omg<'), 'primary label is the tmux session name');
@@ -52,6 +53,7 @@ test('SidebarLiveSection falls back to the conversation title when tmux name is 
       liveSessionTmuxIds: new Map<string, string>(),
       selectedSession: null,
       onSessionSelect,
+      onIdleSessionOpen: noop,
     }),
   );
   assert.ok(html.includes('Live conversation title'), 'primary label falls back to the title');
@@ -67,6 +69,7 @@ test('SidebarLiveSection renders nothing when no session is live', () => {
       liveSessionTmuxIds: new Map<string, string>(),
       selectedSession: null,
       onSessionSelect,
+      onIdleSessionOpen: noop,
     }),
   );
   assert.equal(html, '');
@@ -82,30 +85,47 @@ test('SidebarLiveSection renders idle-gjc rows as 대기 (첫 대화 전 gjc pan
       liveSessionTmuxIds: new Map([['idle-gjc:flask', '$9']]),
       selectedSession: null,
       onSessionSelect,
+      onIdleSessionOpen: noop,
     }),
   );
   assert.ok(html.includes('>flask<'), 'labels the row by tmux session name');
   assert.ok(html.includes('대기'), 'idle rows carry the 대기 badge, not LIVE');
   assert.ok(!html.includes('LIVE'), 'no LIVE badge for a session with no transcript');
-  assert.ok(html.includes('프롬프트 대기 중'), 'explains the row is awaiting input, without claiming no conversation exists');
+  assert.ok(html.includes('클릭하면 메인 영역에서 첫 메시지를 보냅니다'), 'explains that input now happens in the main area');
   assert.ok(html.includes('tmux 세션 flask 닫기'), 'lineage-grade idle rows keep the kill control');
-  assert.ok(html.includes('첫 메시지 보내기'), 'lineage-grade idle rows offer the inline first-message composer');
+  assert.ok(html.includes('aria-label="flask 대기 세션 열기"'), 'lineage-grade idle rows open the main waiting view');
 });
 
-test('SidebarLiveSection: non-lineage rows never get the first-message composer', () => {
-  // A tmuxName without lineage proof must not receive keystrokes (patina 실사고
-  // 계약과 동일) — the composer is gated exactly like kill/relay.
+test('SidebarLiveSection: non-lineage idle rows cannot open the waiting view', () => {
   const html = renderToStaticMarkup(
     createElement(SidebarLiveSection, {
       projects: makeProjects(),
-      liveSessionIds: new Set(['zz-unmatched-id']),
-      liveSessionNames: new Map([['zz-unmatched-id', 'somewhere']]),
+      liveSessionIds: new Set(['idle-gjc:somewhere']),
+      liveSessionNames: new Map([['idle-gjc:somewhere', 'somewhere']]),
       liveSessionLineage: new Set<string>(),
-      liveSessionTmuxIds: new Map<string, string>(),
+      liveSessionTmuxIds: new Map([['idle-gjc:somewhere', '$10']]),
       selectedSession: null,
       onSessionSelect,
+      onIdleSessionOpen: noop,
     }),
   );
   assert.ok(html.includes('somewhere'), 'row is still visible');
-  assert.ok(!html.includes('첫 메시지 보내기'), 'no composer without a lineage claim');
+  assert.ok(!html.includes('대기 세션 열기'), 'no waiting-view button without a lineage claim');
+});
+
+test('SidebarLiveSection: idle rows without a tmux generation cannot open the waiting view', () => {
+  const html = renderToStaticMarkup(
+    createElement(SidebarLiveSection, {
+      projects: makeProjects(),
+      liveSessionIds: new Set(['idle-gjc:somewhere']),
+      liveSessionNames: new Map([['idle-gjc:somewhere', 'somewhere']]),
+      liveSessionLineage: new Set(['idle-gjc:somewhere']),
+      liveSessionTmuxIds: new Map<string, string>(),
+      selectedSession: null,
+      onSessionSelect,
+      onIdleSessionOpen: noop,
+    }),
+  );
+  assert.ok(html.includes('somewhere'), 'row is still visible');
+  assert.ok(!html.includes('대기 세션 열기'), 'no waiting-view button without a tmux generation');
 });

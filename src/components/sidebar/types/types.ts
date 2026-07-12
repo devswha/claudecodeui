@@ -1,4 +1,4 @@
-import type { ExternalTerminalTarget, LoadingProgress, Project, ProjectSession, LLMProvider } from '../../../types/app';
+import type { ExternalTerminalTarget, IdleGjcTarget, LoadingProgress, Project, ProjectSession, LLMProvider } from '../../../types/app';
 import type { SessionActivityMap } from '../../../hooks/useSessionProtection';
 
 export type ProjectSortOrder = 'name' | 'date';
@@ -68,6 +68,7 @@ export type SidebarProps = {
   isMobile: boolean;
   // Opens an external CLI (claude/codex) tmux session as a full main-area terminal.
   onExternalTerminalOpen: (target: ExternalTerminalTarget) => void;
+  onIdleSessionOpen: (target: IdleGjcTarget) => void;
 };
 
 export type SessionViewModel = {
