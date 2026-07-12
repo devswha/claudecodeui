@@ -10,7 +10,7 @@ import { sessionsService } from '@/modules/providers/services/sessions.service.j
 import { getLiveGjcSessions, IDLE_GJC_ID_PREFIX } from '@/modules/providers/services/live-sessions.service.js';
 import { getExternalCliSessions } from '@/modules/providers/services/external-cli-sessions.service.js';
 import { getHomeDir, getHomeDirSuggestions, getSpawnDirSuggestions } from '@/modules/providers/services/home-dirs.service.js';
-import { isValidTmuxName, sendToLiveSession, isValidSpawnName, spawnLiveSession, killLiveSession } from '@/modules/providers/services/live-send.service.js';
+import { isValidTmuxName, sendToLiveSession, isValidSpawnName, spawnLiveSession, killLiveSession, answerLiveSession } from '@/modules/providers/services/live-send.service.js';
 import type {
   LLMProvider,
   McpScope,
@@ -704,6 +704,27 @@ router.post(
     }
     await assertLineageTmuxTarget(body.tmuxName, readTmuxIdParam(body.tmuxId));
     const result = await killLiveSession(body.tmuxName);
+    res.json(createApiSuccessResponse(result));
+  }),
+);
+
+router.post(
+  '/sessions/live/answer',
+  asyncHandler(async (req: Request, res: Response) => {
+    // Answer a live session's ask-TUI menu: the tower navigates to the exact
+    // option label and commits only after verifying the cursor row. Same
+    // lineage + generation-token gate as send/kill — a stale UI must not drive
+    // keystrokes into a same-named session that replaced the one it saw.
+    const body = (req.body ?? {}) as { tmuxName?: unknown; tmuxId?: unknown; label?: unknown };
+    if (!isValidTmuxName(body.tmuxName)) {
+      throw new AppError('A valid tmuxName is required.', { code: 'INVALID_TMUX_NAME', statusCode: 400 });
+    }
+    const label = typeof body.label === 'string' ? body.label : '';
+    if (!label.trim()) {
+      throw new AppError('label is required.', { code: 'EMPTY_LABEL', statusCode: 400 });
+    }
+    await assertLineageTmuxTarget(body.tmuxName, readTmuxIdParam(body.tmuxId));
+    const result = await answerLiveSession(body.tmuxName, label);
     res.json(createApiSuccessResponse(result));
   }),
 );

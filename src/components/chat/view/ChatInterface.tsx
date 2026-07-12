@@ -11,6 +11,9 @@ import { useChatProviderState } from '../hooks/useChatProviderState';
 import { useChatSessionState } from '../hooks/useChatSessionState';
 import { useChatRealtimeHandlers } from '../hooks/useChatRealtimeHandlers';
 import { useChatComposerState } from '../hooks/useChatComposerState';
+import { LiveAnswerContext, type LiveAnswerFn } from '../tools/liveAnswerContext';
+import { api } from '../../../utils/api';
+import { requestLivePollBoost } from '../../../utils/livePollBoost';
 import { useSessionStore } from '../../../stores/useSessionStore';
 
 import ChatMessagesPane from './subcomponents/ChatMessagesPane';
@@ -310,6 +313,30 @@ function ChatInterface({
     handlePermissionDecision,
   }), [pendingPermissionRequests, handlePermissionDecision]);
 
+  // Answering a live session's ask menu by option label. Non-null only when a
+  // live tmux target with a generation token is in view — the tower requires
+  // both and verifies the on-screen menu before committing (fail-closed).
+  const liveAnswer = useMemo<LiveAnswerFn | null>(() => {
+    if (!liveSessionTmuxName || !liveSessionTmuxId) {
+      return null;
+    }
+    return async (label: string) => {
+      try {
+        const response = await api.liveSessionAnswer(liveSessionTmuxName, liveSessionTmuxId, label);
+        const body = await response.json().catch(() => null);
+        const data = (body?.data ?? body ?? {}) as { ok?: boolean; stale?: boolean; detail?: string };
+        requestLivePollBoost();
+        return {
+          ok: Boolean(response.ok && data.ok),
+          stale: response.status === 409 || Boolean(data.stale),
+          detail: typeof data.detail === 'string' ? data.detail : '',
+        };
+      } catch {
+        return { ok: false, stale: false, detail: 'network error' };
+      }
+    };
+  }, [liveSessionTmuxName, liveSessionTmuxId]);
+
   // Mirrors ChatComposer's own visibility check so the message pane can
   // reserve enough bottom space to keep the floating status tab from
   // overlapping the last message.
@@ -339,7 +366,9 @@ function ChatInterface({
     );
   }
 
+
   return (
+    <LiveAnswerContext.Provider value={liveAnswer}>
     <PermissionContext.Provider value={permissionContextValue}>
       <div className="flex h-full min-h-0 flex-col">
         <ChatMessagesPane
@@ -506,6 +535,7 @@ function ChatInterface({
         onSelectProviderModel={selectProviderModel}
       />
     </PermissionContext.Provider>
+    </LiveAnswerContext.Provider>
   );
 }
 

@@ -122,3 +122,35 @@ export async function killLiveSession(tmuxName: string): Promise<LiveKillResult>
   const text = await response.text().catch(() => '');
   return classifyKillResponse(response.status, text);
 }
+
+// ─── Answer a live session's ask-TUI menu (control tower /answer) ────────────
+// The tower navigates the on-screen menu to the exact option LABEL and commits
+// only after verifying the cursor row — never blind keystroke counting. 409 =
+// the menu is gone / label mismatch / multi-select (answer at the terminal).
+
+export type LiveAnswerResult = { ok: boolean; reachable: boolean; stale: boolean; detail: string };
+
+/** Pure classifier for the tower's /answer response (409 = menu gone / mismatch). */
+export function classifyAnswerResponse(status: number, body: string): LiveAnswerResult {
+  const detail = body.trim().slice(0, 500);
+  const ok = status >= 200 && status < 300;
+  return { ok, reachable: true, stale: status === 409, detail };
+}
+
+/** Proxies an answer (option pick) to the tower's /answer. Never throws. */
+export async function answerLiveSession(tmuxName: string, label: string): Promise<LiveAnswerResult> {
+  const body = new URLSearchParams({ session: tmuxName, label });
+  let response: Response;
+  try {
+    response = await fetch(`${towerUrl()}/answer`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body,
+      signal: AbortSignal.timeout(10000),
+    });
+  } catch {
+    return { ok: false, reachable: false, stale: false, detail: 'control tower is not reachable' };
+  }
+  const text = await response.text().catch(() => '');
+  return classifyAnswerResponse(response.status, text);
+}

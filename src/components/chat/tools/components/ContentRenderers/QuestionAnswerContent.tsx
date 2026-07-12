@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
+
 import type { Question } from '../../../types/types';
+import { useLiveAnswer } from '../../liveAnswerContext';
 
 interface QuestionAnswerContentProps {
   questions: Question[];
@@ -13,7 +15,22 @@ export const QuestionAnswerContent: React.FC<QuestionAnswerContentProps> = ({
   answers,
   className = '',
 }) => {
-  const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
+  // Single-question asks (the common gjc case) start expanded so options —
+  // and the live answer buttons — are visible without an extra click.
+  const [expandedIdx, setExpandedIdx] = useState<number | null>(
+    Array.isArray(questions) && questions.length === 1 ? 0 : null,
+  );
+  // Live ask-menu answering (present only when viewing a live tmux session).
+  const liveAnswer = useLiveAnswer();
+  const [pick, setPick] = useState<{ label: string; status: 'sending' | 'ok' | 'stale' | 'error'; detail: string } | null>(null);
+  const submitPick = async (label: string) => {
+    if (!liveAnswer || pick?.status === 'sending') {
+      return;
+    }
+    setPick({ label, status: 'sending', detail: '' });
+    const result = await liveAnswer(label);
+    setPick({ label, status: result.ok ? 'ok' : result.stale ? 'stale' : 'error', detail: result.detail });
+  };
 
   // Tool inputs are runtime data loaded from session transcripts and may be
   // malformed (e.g. `questions` arriving as a non-array). Guard with
@@ -126,6 +143,43 @@ export const QuestionAnswerContent: React.FC<QuestionAnswerContentProps> = ({
             {isExpanded && (
               <div className="border-t border-gray-100 px-3 pb-2.5 pt-0.5 dark:border-gray-700/40">
                 <div className="ml-6.5 space-y-1">
+                {/* Live answering: a pending gjc ask menu is on screen. Clicking
+                    a label drives the tower to navigate+commit that option. The
+                    read-only list below still shows the full set. */}
+                {liveAnswer && answerLabels.length === 0 && options.length > 0 && (
+                  <div className="mb-2 space-y-1">
+                    {options.map((opt) => {
+                      const isPicked = pick?.label === opt.label;
+                      const done = isPicked && pick?.status === 'ok';
+                      return (
+                        <button
+                          key={`live-${opt.label}`}
+                          type="button"
+                          onClick={() => void submitPick(opt.label)}
+                          disabled={pick?.status === 'sending'}
+                          className={`flex w-full items-center gap-2 rounded-lg border px-2.5 py-1.5 text-left text-[12px] transition-colors disabled:cursor-not-allowed ${
+                            done
+                              ? 'border-blue-300 bg-blue-50 text-blue-700 dark:border-blue-700/50 dark:bg-blue-900/30 dark:text-blue-300'
+                              : 'border-border bg-card hover:border-blue-400/60 hover:bg-blue-50/40 dark:hover:bg-blue-900/10'
+                          }`}
+                        >
+                          <span className="flex-1 truncate font-medium">{opt.label}</span>
+                          {isPicked && pick?.status === 'sending' && (
+                            <span className="text-[11px] text-muted-foreground">전송 중…</span>
+                          )}
+                          {done && <span className="text-[11px]">✓ 선택됨</span>}
+                          {isPicked && pick?.status === 'stale' && (
+                            <span className="text-[11px] text-amber-600 dark:text-amber-400">이미 지난 질문</span>
+                          )}
+                          {isPicked && pick?.status === 'error' && (
+                            <span className="text-[11px] text-red-500">전송 실패</span>
+                          )}
+                        </button>
+                      );
+                    })}
+                    <p className="px-1 text-[10px] text-muted-foreground">웹에서 선택 → 세션 메뉴에 자동 반영 (터미널에서 직접 골라도 됩니다)</p>
+                  </div>
+                )}
                   {options.map((opt) => {
                     const wasSelected = answerLabels.includes(opt.label);
                     return (

@@ -99,6 +99,19 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ tmuxName, tmuxId }),
     }),
+  // Answer a live session's ask-TUI menu by option label (POST /answer). The
+  // tower navigates the on-screen menu to the exact label and commits only
+  // after verifying the cursor row. tmuxId ($N) is required (same gate as send).
+  /**
+   * @param {string} tmuxName
+   * @param {string} tmuxId
+   * @param {string} label
+   */
+  liveSessionAnswer: (tmuxName, tmuxId, label) =>
+    authenticatedFetch('/api/providers/sessions/live/answer', {
+      method: 'POST',
+      body: JSON.stringify({ tmuxName, tmuxId, label }),
+    }),
   // External CLI (claude/codex) tmux sessions for the terminal-attach lane.
   externalSessions: () => authenticatedFetch('/api/providers/sessions/external'),
   // Directory autocomplete ({ home, suggestions }). Default scope is
