@@ -144,6 +144,9 @@ tasks/
 # Git worktrees
 .worktrees/
 
+# Deploy state (last-good commit marker for scripts/deploy.sh)
+/.deploy/
+
 # Local desktop packaging artifacts
 /.desktop-build/
 /release/
