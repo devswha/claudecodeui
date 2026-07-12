@@ -35,6 +35,16 @@ export type ExternalTerminalTarget = {
   kind: string;
   project: Project;
 };
+/** Idle gjc pane — full main-area waiting view. tmuxId non-null[P1-1].
+ *  excludedSessionIds: 뷰 오픈 시점에 이미 적격이던 세션 id — 전환은 이후 신규 관측 후보만 대상[P1-C]. */
+export type IdleGjcTarget = {
+  kind: 'idle-gjc'; tmuxName: string; tmuxId: string; excludedSessionIds: readonly string[];
+};
+/** 메인 영역 takeover — external·idle 상호배타 타입 강제. [P2-4] */
+export type MainTakeover =
+  | { kind: 'external'; target: ExternalTerminalTarget }
+  | { kind: 'idle-gjc'; target: IdleGjcTarget }
+  | null;
 
 export interface ProjectSession {
   id: string;
