@@ -69,7 +69,7 @@ test('parseExtraSpawnRoots keeps only absolute csv entries', () => {
   assert.deepEqual(parseExtraSpawnRoots(' /Volumes/Data/Dev Workspace , relative/path , '), ['/Volumes/Data/Dev Workspace']);
 });
 
-test('getSpawnDirSuggestions: workspace entries stay short; home-shadowed names use the root alias', async () => {
+test('getSpawnDirSuggestions: workspace entries are uniformly root-alias prefixed; home stays relative', async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), 'spawn-home-'));
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'spawn root-'))); // space: 실제 워크스페이스 경로 형태
   try {
@@ -80,20 +80,22 @@ test('getSpawnDirSuggestions: workspace entries stay short; home-shadowed names 
     await mkdir(path.join(root, 'aegis-alpha', 'sub'));
 
     const alias = path.basename(root);
-    // Empty prefix = default list: workspace children first (short bare names
-    // — the tower resolves them to the root since home has no such child),
-    // then home's. The 'shared' collision uses the "<root basename>/shared"
-    // alias: its bare string would silently spawn in $HOME instead of the
-    // listed root, and its full absolute form drowned the dropdown.
+    // Empty prefix = default list: workspace children first, ALL in the
+    // uniform "<root basename>/<name>" shape (one consistent form — mixing
+    // bare and prefixed entries confused the picker), then home's relative
+    // names. The 'shared' collision is naturally unambiguous this way.
     assert.deepEqual(
       await getSpawnDirSuggestions('', home, [root]),
-      ['aegis-alpha', `${alias}/shared`, 'shared', 'zeta'],
+      [`${alias}/aegis-alpha`, `${alias}/shared`, 'shared', 'zeta'],
     );
     // Fragment matching hits the workspace root even when home has no match.
-    assert.deepEqual(await getSpawnDirSuggestions('aeg', home, [root]), ['aegis-alpha']);
-    // Nested listing under an unshadowed workspace child stays short too.
-    assert.deepEqual(await getSpawnDirSuggestions('aegis-alpha/', home, [root]), ['aegis-alpha/sub']);
-    // Continued typing after picking an alias entry keeps the alias form.
+    assert.deepEqual(await getSpawnDirSuggestions('aeg', home, [root]), [`${alias}/aegis-alpha`]);
+    // Typing the alias itself offers the root as a completion step.
+    assert.deepEqual(
+      await getSpawnDirSuggestions(alias.slice(0, 3), home, [root]),
+      [alias],
+    );
+    // Continued typing in the alias form lists that root's children.
     assert.deepEqual(
       await getSpawnDirSuggestions(`${alias}/aegis-alpha/`, home, [root]),
       [`${alias}/aegis-alpha/sub`],

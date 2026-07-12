@@ -131,13 +131,12 @@ export function parseExtraSpawnRoots(raw: string | undefined): string[] {
  * Spawn-scope suggestions: extra spawn roots (the tower's TOWER_ALLOWED_ROOTS,
  * e.g. the /Volumes workspace) come FIRST, then $HOME.
  *
- * Extra-root entries stay SHORT (bare relative names — the tower's
- * resolveSpawnCwd resolves $HOME first, then each root, so an unshadowed name
- * lands in the root exactly as displayed). When the same relative path ALSO
- * exists under $HOME, the entry switches to the "<root basename>/rest" alias
- * ("Dev Workspace/argus") that the tower resolves against the root's parent —
- * still short, but unambiguous (리뷰 반영: bare collisions spawned in $HOME;
- * 실사용 피드백: full absolute paths drowned the dropdown). Alias and absolute
+ * Extra-root entries are UNIFORMLY "<root basename>/rest" ("Dev Workspace/
+ * argus"): one consistent, short, root-identifying shape (실사용 피드백:
+ * full absolute paths drowned the dropdown; mixing bare and prefixed forms
+ * was confusing; bare names alone spawned in $HOME on a name collision —
+ * 리뷰 반영). The tower resolves the alias against the root's PARENT, same
+ * containment contract. Home entries stay home-relative. Alias and absolute
  * prefixes are both accepted for continued typing, contained to the roots.
  */
 export async function getSpawnDirSuggestions(
@@ -161,15 +160,12 @@ export async function getSpawnDirSuggestions(
       lanes.push(entries.map((entry) => `${rootReal}${path.sep}${entry}`));
     }
   } else {
-    const homeReal = await safeRealpath(homeDir);
     for (const root of extraRoots) {
       const rootReal = await safeRealpath(root);
       if (!rootReal) {
         lanes.push([]);
         continue;
       }
-      // "<root basename>/rest" alias — short disambiguated form the tower
-      // resolves against the root's parent ("Dev Workspace/argus").
       const alias = path.basename(rootReal);
       if (prefix === alias || prefix.startsWith(`${alias}/`)) {
         const rel = prefix === alias ? '' : prefix.slice(alias.length + 1);
@@ -177,14 +173,14 @@ export async function getSpawnDirSuggestions(
         lanes.push(entries.map((entry) => `${alias}/${entry}`));
         continue;
       }
-      const entries = await suggestUnderBase(prefix, rootReal, [rootReal]);
       const lane: string[] = [];
-      for (const entry of entries) {
-        // Shadow test mirrors the tower: would $HOME-first resolution hijack
-        // this bare name? Only then pay the alias-prefixed form.
-        const shadowed = homeReal !== null && (await safeRealpath(path.join(homeReal, entry))) !== null;
-        lane.push(shadowed ? `${alias}/${entry}` : entry);
+      // Typing the alias itself completes to the root ("Dev W…" → pick →
+      // "Dev Workspace/" lists its children).
+      if (prefix.length > 0 && alias.startsWith(prefix)) {
+        lane.push(alias);
       }
+      const entries = await suggestUnderBase(prefix, rootReal, [rootReal]);
+      lane.push(...entries.map((entry) => `${alias}/${entry}`));
       lanes.push(lane);
     }
     lanes.push(await suggestUnderBase(prefix, homeDir, await resolveAllowedRoots(homeDir)));
