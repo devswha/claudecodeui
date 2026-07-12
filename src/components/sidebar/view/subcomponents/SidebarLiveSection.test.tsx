@@ -89,4 +89,23 @@ test('SidebarLiveSection renders idle-gjc rows as 대기 (첫 대화 전 gjc pan
   assert.ok(!html.includes('LIVE'), 'no LIVE badge for a session with no transcript');
   assert.ok(html.includes('아직 대화가 없습니다'), 'explains why it is not openable yet');
   assert.ok(html.includes('tmux 세션 flask 닫기'), 'lineage-grade idle rows keep the kill control');
+  assert.ok(html.includes('첫 메시지 보내기'), 'lineage-grade idle rows offer the inline first-message composer');
+});
+
+test('SidebarLiveSection: non-lineage rows never get the first-message composer', () => {
+  // A tmuxName without lineage proof must not receive keystrokes (patina 실사고
+  // 계약과 동일) — the composer is gated exactly like kill/relay.
+  const html = renderToStaticMarkup(
+    createElement(SidebarLiveSection, {
+      projects: makeProjects(),
+      liveSessionIds: new Set(['zz-unmatched-id']),
+      liveSessionNames: new Map([['zz-unmatched-id', 'somewhere']]),
+      liveSessionLineage: new Set<string>(),
+      liveSessionTmuxIds: new Map<string, string>(),
+      selectedSession: null,
+      onSessionSelect,
+    }),
+  );
+  assert.ok(html.includes('somewhere'), 'row is still visible');
+  assert.ok(!html.includes('첫 메시지 보내기'), 'no composer without a lineage claim');
 });

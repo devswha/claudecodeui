@@ -30,6 +30,13 @@ type KillStatus =
   | { kind: 'killing' }
   | { kind: 'error'; text: string };
 
+/** Per-idle-row first-message flow state (web-only usage must not require tmux). */
+type IdleSendStatus =
+  | { kind: 'idle' }
+  | { kind: 'sending' }
+  | { kind: 'sent'; text: string }
+  | { kind: 'error'; text: string };
+
 /** Compact relative age for a session's last activity: <1m, Xm, Xhr, Xd, or ''. */
 function formatAge(iso: string): string {
   const time = new Date(iso).getTime();
@@ -68,6 +75,8 @@ export default function SidebarLiveSection({
   // live poll is the source of truth and will drop them for real.
   const [killedIds, setKilledIds] = useState<ReadonlySet<string>>(new Set());
   const [killStatus, setKillStatus] = useState<Map<string, KillStatus>>(new Map());
+  const [idleDrafts, setIdleDrafts] = useState<Map<string, string>>(new Map());
+  const [idleSendStatus, setIdleSendStatus] = useState<Map<string, IdleSendStatus>>(new Map());
 
   // Reconcile row-local state with each authoritative snapshot (리뷰 반영):
   // ids the poll no longer reports drop their killed/confirm/error state, so a
@@ -79,6 +88,14 @@ export default function SidebarLiveSection({
       return next.size === prev.size ? prev : next;
     });
     setKillStatus((prev) => {
+      const next = new Map([...prev].filter(([id]) => liveSessionIds.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+    setIdleDrafts((prev) => {
+      const next = new Map([...prev].filter(([id]) => liveSessionIds.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+    setIdleSendStatus((prev) => {
       const next = new Map([...prev].filter(([id]) => liveSessionIds.has(id)));
       return next.size === prev.size ? prev : next;
     });
@@ -149,6 +166,95 @@ export default function SidebarLiveSection({
     } catch {
       setStatusOf(sessionId, { kind: 'error', text: '세션 종료 실패' });
     }
+  };
+
+  const idleStatusOf = (id: string): IdleSendStatus => idleSendStatus.get(id) ?? { kind: 'idle' };
+  const setIdleStatusOf = (id: string, status: IdleSendStatus) => {
+    setIdleSendStatus((prev) => {
+      const next = new Map(prev);
+      if (status.kind === 'idle') {
+        next.delete(id);
+      } else {
+        next.set(id, status);
+      }
+      return next;
+    });
+  };
+
+  // First message into an idle gjc pane, straight from the web (mobile/web-only
+  // usage must not require a tmux hop). Same relay path as LiveRelayComposer:
+  // the tower types into the pane; gjc then opens its transcript and the 5s
+  // poll transitions this row into a real, openable session.
+  const sendFirstMessage = async (id: string, tmuxName: string) => {
+    const message = (idleDrafts.get(id) ?? '').trim();
+    if (!message || idleStatusOf(id).kind === 'sending') {
+      return;
+    }
+    setIdleStatusOf(id, { kind: 'sending' });
+    try {
+      const response = await api.liveSessionSend(tmuxName, message);
+      const body = await response.json().catch(() => null);
+      const data = (body?.data ?? body ?? {}) as { ok?: boolean; reachable?: boolean; queued?: boolean; detail?: string };
+      if (data.reachable === false) {
+        setIdleStatusOf(id, { kind: 'error', text: '관제탑 미가동 — 전송 불가' });
+        return;
+      }
+      if (!response.ok || data.ok === false) {
+        setIdleStatusOf(id, { kind: 'error', text: (typeof body?.error === 'string' && body.error) || data.detail || '전송 실패' });
+        return;
+      }
+      setIdleDrafts((prev) => {
+        const next = new Map(prev);
+        next.delete(id);
+        return next;
+      });
+      setIdleStatusOf(id, {
+        kind: 'sent',
+        text: data.queued ? '대기열 등록됨 — 준비되면 전달됩니다' : '전달됨 — 곧 대화로 나타납니다',
+      });
+    } catch {
+      setIdleStatusOf(id, { kind: 'error', text: '전송 실패' });
+    }
+  };
+
+  /** Inline first-message composer for lineage-grade idle rows. */
+  const idleComposer = (id: string, tmuxName: string) => {
+    const status = idleStatusOf(id);
+    return (
+      <div className="px-2 pb-1.5">
+        <div className="flex items-center gap-1 rounded-md border border-border/60 bg-background/60 px-1.5 py-1">
+          <input
+            type="text"
+            value={idleDrafts.get(id) ?? ''}
+            onChange={(event) => {
+              const value = event.target.value;
+              setIdleDrafts((prev) => new Map(prev).set(id, value));
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
+                event.preventDefault();
+                void sendFirstMessage(id, tmuxName);
+              }
+            }}
+            placeholder="첫 메시지 보내기… (Enter 전송)"
+            className="min-w-0 flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground/60"
+          />
+          <button
+            type="button"
+            onClick={() => void sendFirstMessage(id, tmuxName)}
+            disabled={!(idleDrafts.get(id) ?? '').trim() || status.kind === 'sending'}
+            className="shrink-0 rounded bg-primary px-2 py-0.5 text-[11px] font-medium text-primary-foreground transition-colors hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {status.kind === 'sending' ? '전송 중…' : '전송'}
+          </button>
+        </div>
+        {(status.kind === 'sent' || status.kind === 'error') && (
+          <p className={`pt-0.5 text-[11px] ${status.kind === 'error' ? 'text-red-500' : 'text-blue-600 dark:text-blue-400'}`}>
+            {status.text}
+          </p>
+        )}
+      </div>
+    );
   };
 
   // Shared kill affordances (matched rows + orphan rows use the same flow).
@@ -277,12 +383,13 @@ export default function SidebarLiveSection({
                   </span>
                   <span className="truncate pl-[1.375rem] text-[11px] text-muted-foreground">
                     {isIdle
-                      ? '아직 대화가 없습니다 — 첫 메시지 후 열람할 수 있습니다'
+                      ? '아직 대화가 없습니다 — 웹에서 바로 첫 메시지를 보낼 수 있습니다'
                       : '대화 미로딩 — 해당 프로젝트를 열면 제목이 표시됩니다'}
                   </span>
                 </div>
                 {tmuxName && liveSessionLineage.has(id) && killButton(id, tmuxName)}
               </div>
+              {isIdle && tmuxName && liveSessionLineage.has(id) && idleComposer(id, tmuxName)}
               {tmuxName && liveSessionLineage.has(id) && killStrip(id, tmuxName)}
             </div>
           );
