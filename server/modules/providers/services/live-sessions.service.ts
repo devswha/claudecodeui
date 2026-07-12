@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { open, readFile, realpath, stat } from 'node:fs/promises';
+import { open, realpath, stat } from 'node:fs/promises';
 
 /**
  * Live gjc session detection + tmux-session naming.
@@ -7,14 +7,17 @@ import { open, readFile, realpath, stat } from 'node:fs/promises';
  * A gjc session is "live" when a running gjc process has its transcript file open.
  * For the "작동 중" fleet view we also map each live session id → the tmux session
  * NAME it runs in (omg / stock / flask / …), by PROCESS LINEAGE:
- *   - lsof (-c gjc -F pn) → {session-id uuid, holder pid} for open session files
- *   - /proc/<pid>/stat    → the holder's ancestor pid chain
+ *   - lsof (-c gjc/bun/node -F pn) → {session-id uuid, holder pid} for open session
+ *     files (macOS: gjc runs under its runtime wrapper, so comm is `bun`/`node` —
+ *     `-c gjc` alone finds nothing there; the session-file path is the real filter)
+ *   - ps -eo pid=,ppid=   → one snapshot for the holder's ancestor pid chain
+ *     (portable: macOS has no /proc)
  *   - tmux list-panes     → {session_name, pane_pid, pane cwd (realpath)}
  *   - a pane_pid found in the holder's ancestor chain → that pane's tmux name (0 ambiguity)
  *   - cwd equality is a FALLBACK only (many-to-many when panes share a cwd)
  *
  * Matching is PATH-AGNOSTIC (uuid + realpath'd cwds), so production cloudcli's
- * decoy HOME (whose `.gjc` is a symlink) does not break it. tmux/lsof/proc access
+ * decoy HOME (whose `.gjc` is a symlink) does not break it. tmux/lsof/ps access
  * is ISOLATED here and fails closed to [] (or tmuxName:null on a miss — the UI
  * falls back to the conversation title).
  */
@@ -168,7 +171,15 @@ export function computeLiveSessions(args: {
 
 function runCommand(command: string, cmdArgs: string[], timeoutMs = 4000): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, cmdArgs, { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
+    const child = spawn(command, cmdArgs, {
+      stdio: ['ignore', 'pipe', 'ignore'],
+      windowsHide: true,
+      // Service managers (launchd/systemd) ship no locale. In a non-UTF-8
+      // locale tmux SANITIZES its output — the \t field separators come back
+      // as `_` and non-ASCII paths get escaped — which silently unparses every
+      // pane row (실측 macOS launchd: 모든 세션 tmuxName null). Force UTF-8.
+      env: { ...process.env, LANG: process.env.LANG || 'en_US.UTF-8' },
+    });
     let stdout = '';
     let settled = false;
     const timer = setTimeout(() => {
@@ -196,38 +207,48 @@ async function safeRealpath(target: string): Promise<string | null> {
   }
 }
 
-/** Reads the parent pid from /proc/<pid>/stat (comm may contain spaces/parens). */
-async function readParentPid(pid: number): Promise<number | null> {
-  try {
-    const content = await readFile(`/proc/${pid}/stat`, 'utf8');
-    const rparen = content.lastIndexOf(')');
-    if (rparen < 0) {
-      return null;
+/** Parses `ps -eo pid=,ppid=` output into a child pid → parent pid map. */
+export function parsePidParents(output: string): Map<number, number> {
+  const parents = new Map<number, number>();
+  for (const raw of output.split(/\r?\n/)) {
+    const match = /^\s*(\d+)\s+(\d+)\s*$/.exec(raw);
+    if (match) {
+      parents.set(Number.parseInt(match[1], 10), Number.parseInt(match[2], 10));
     }
-    // After "pid (comm)" the fields are: state ppid pgrp … → index 1 is ppid.
-    const fields = content.slice(rparen + 2).trim().split(/\s+/);
-    const ppid = Number.parseInt(fields[1] ?? '', 10);
-    return Number.isFinite(ppid) ? ppid : null;
-  } catch {
-    return null;
   }
+  return parents;
 }
 
 /** Walks the ancestor pid chain [pid, ppid, …] toward init (depth/cycle guarded). */
-async function buildPidChain(pid: number): Promise<number[]> {
+export function buildPidChain(pid: number, parents: ReadonlyMap<number, number>): number[] {
   const chain: number[] = [];
   const seen = new Set<number>();
   let cur = pid;
   for (let i = 0; i < 64 && cur > 1 && !seen.has(cur); i += 1) {
     chain.push(cur);
     seen.add(cur);
-    const parent = await readParentPid(cur);
+    const parent = parents.get(cur);
     if (parent == null) {
       break;
     }
     cur = parent;
   }
   return chain;
+}
+
+/** Maps pid → cwd from `lsof -a -p <pids> -d cwd -F pn` output (first path wins). */
+export function parseCwdByPidFromLsof(output: string): Map<number, string> {
+  const cwds = new Map<number, string>();
+  let pid: number | null = null;
+  for (const raw of output.split(/\r?\n/)) {
+    if (raw.startsWith('p')) {
+      const parsed = Number.parseInt(raw.slice(1), 10);
+      pid = Number.isFinite(parsed) ? parsed : null;
+    } else if (raw.startsWith('n') && pid != null && !cwds.has(pid)) {
+      cwds.set(pid, raw.slice(1));
+    }
+  }
+  return cwds;
 }
 
 /** Maps session id → transcript path from lsof `n` lines (first path wins). */
@@ -334,7 +355,7 @@ async function readLastModelFromFile(path: string): Promise<string | null> {
 
 /**
  * Returns live gjc sessions with their tmux session name. Empty on any failure
- * (no tmux/lsof, spawn error) — tmux/lsof/proc dependence is confined here.
+ * (no tmux/lsof, spawn error) — tmux/lsof/ps dependence is confined here.
  */
 export async function getLiveGjcSessions(): Promise<LiveGjcSession[]> {
   let tmuxOutput: string;
@@ -353,16 +374,45 @@ export async function getLiveGjcSessions(): Promise<LiveGjcSession[]> {
 
   let lsofOutput: string;
   try {
-    lsofOutput = await runCommand('lsof', ['-c', 'gjc', '-F', 'pn']);
+    // -c matches the process COMM: a Linux gjc binary is `gjc`, but a script
+    // install runs under its runtime (macOS 실측: comm은 `bun`) — cover both.
+    // SESSION_FILE_RE below is the authoritative filter; -c only bounds cost.
+    lsofOutput = await runCommand('lsof', ['-c', 'gjc', '-c', 'bun', '-c', 'node', '-F', 'pn']);
   } catch {
     return [];
   }
+  const holders = parseLsofPidSessions(lsofOutput);
+
+  // One ps snapshot for ancestor chains — /proc/<pid>/stat does not exist on
+  // macOS. Best-effort: an empty map only disables lineage, cwd fallback stays.
+  let parents: Map<number, number> = new Map();
+  try {
+    parents = parsePidParents(await runCommand('ps', ['-eo', 'pid=,ppid=']));
+  } catch {
+    // fall through with an empty map
+  }
+
+  // Holder cwds for the label-only fallback — /proc/<pid>/cwd does not exist on
+  // macOS; one batched lsof -d cwd works on both platforms. Best-effort too.
+  let cwdByPid = new Map<number, string>();
+  const holderPids = [...new Set(holders.map((holder) => holder.pid))];
+  if (holderPids.length > 0) {
+    try {
+      cwdByPid = parseCwdByPidFromLsof(
+        await runCommand('lsof', ['-a', '-p', holderPids.join(','), '-d', 'cwd', '-F', 'pn']),
+      );
+    } catch {
+      // fall through with an empty map
+    }
+  }
+
   const sessions: Array<{ id: string; pidChain: number[]; cwd: string | null }> = [];
-  for (const { id, pid } of parseLsofPidSessions(lsofOutput)) {
+  for (const { id, pid } of holders) {
+    const rawCwd = cwdByPid.get(pid);
     sessions.push({
       id,
-      pidChain: await buildPidChain(pid),
-      cwd: await safeRealpath(`/proc/${pid}/cwd`),
+      pidChain: buildPidChain(pid, parents),
+      cwd: rawCwd ? await safeRealpath(rawCwd) : null,
     });
   }
 

@@ -25,6 +25,16 @@ export type ExternalCliSession = { tmuxName: string; kind: ExternalCliKind };
 /** Matches the tower/live-send tmux-name discipline; also safe to embed in a shell command. */
 export const EXTERNAL_TMUX_NAME_RE = /^[A-Za-z0-9._-]{1,64}$/;
 
+/**
+ * macOS `ps -eo comm` prints the executable's FULL PATH (e.g.
+ * /Applications/ChatGPT.app/Contents/Resources/codex) while Linux prints the
+ * bare name — classification compares bare names, so normalize to basename.
+ */
+function commBasename(comm: string): string {
+  const slash = comm.lastIndexOf('/');
+  return slash < 0 ? comm : comm.slice(slash + 1);
+}
+
 /** Parses `#{session_name}\t#{pane_pid}\t#{pane_current_command}` lines. */
 export function parseExternalPanes(output: string): Array<{ name: string; pid: number; command: string }> {
   const panes: Array<{ name: string; pid: number; command: string }> = [];
@@ -39,7 +49,7 @@ export function parseExternalPanes(output: string): Array<{ name: string; pid: n
     }
     const name = raw.slice(0, first).trim();
     const pid = Number.parseInt(raw.slice(first + 1, second).trim(), 10);
-    const command = raw.slice(second + 1).trim();
+    const command = commBasename(raw.slice(second + 1).trim());
     if (name && Number.isFinite(pid)) {
       panes.push({ name, pid, command });
     }
@@ -47,7 +57,7 @@ export function parseExternalPanes(output: string): Array<{ name: string; pid: n
   return panes;
 }
 
-/** Parses `ps -eo pid,ppid,comm` output into {pid, ppid, comm} rows (header tolerated). */
+/** Parses `ps -eo pid,ppid,comm` into {pid, ppid, comm} rows (header tolerated, comm → basename). */
 export function parsePsTree(output: string): Array<{ pid: number; ppid: number; comm: string }> {
   const rows: Array<{ pid: number; ppid: number; comm: string }> = [];
   for (const raw of output.split(/\r?\n/)) {
@@ -59,7 +69,7 @@ export function parsePsTree(output: string): Array<{ pid: number; ppid: number; 
     if (!match) {
       continue; // header or malformed line
     }
-    rows.push({ pid: Number.parseInt(match[1], 10), ppid: Number.parseInt(match[2], 10), comm: match[3].trim() });
+    rows.push({ pid: Number.parseInt(match[1], 10), ppid: Number.parseInt(match[2], 10), comm: commBasename(match[3].trim()) });
   }
   return rows;
 }
@@ -149,7 +159,13 @@ export function classifyExternalSessions(args: {
 
 function runCommand(command: string, cmdArgs: string[], timeoutMs = 4000): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, cmdArgs, { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
+    const child = spawn(command, cmdArgs, {
+      stdio: ['ignore', 'pipe', 'ignore'],
+      windowsHide: true,
+      // Service managers ship no locale; non-UTF-8 tmux output sanitizes \t
+      // separators to `_` (see live-sessions.service.ts). Force UTF-8.
+      env: { ...process.env, LANG: process.env.LANG || 'en_US.UTF-8' },
+    });
     let stdout = '';
     let settled = false;
     const timer = setTimeout(() => {
