@@ -488,6 +488,44 @@ export const TOOL_CONFIGS: Record<string, ToolDisplayConfig> = {
     }
   },
 
+  // gjc's interactive choice tool (lowercase `ask`). Without this entry it
+  // fell through to Default — a closed "Parameters" JSON block, i.e. the
+  // question and its options were effectively invisible in the transcript
+  // view while the tmux TUI sat waiting on the menu (실사고). Input shape:
+  // { questions: [{ id, question, options: [{ label }], recommended, multi }] }
+  // — options are already { label } objects, so QuestionAnswerContent takes
+  // them as-is. The user's pick arrives as a separate toolResult message and
+  // stays visible (no hideOnSuccess): in a read-only tmux transcript the
+  // answer chosen at the terminal is part of the story.
+  ask: {
+    input: {
+      type: 'collapsible',
+      title: (input: any) => {
+        const questions = Array.isArray(input?.questions) ? input.questions : [];
+        if (questions.length === 1 && typeof questions[0]?.question === 'string') {
+          const head = questions[0].question.split('\n')[0].trim();
+          return head.length > 72 ? `${head.slice(0, 72)}…` : head || 'Question';
+        }
+        return questions.length > 1 ? `${questions.length} questions` : 'Question';
+      },
+      defaultOpen: true,
+      contentType: 'question-answer',
+      getContentProps: (input: any) => ({
+        questions: Array.isArray(input?.questions) ? input.questions : [],
+        answers: {}
+      }),
+    },
+    result: {
+      type: 'collapsible',
+      title: 'Answer',
+      defaultOpen: true,
+      contentType: 'text',
+      getContentProps: (result: any) => ({
+        content: String(result?.content || ''),
+        format: 'plain'
+      })
+    }
+  },
   // ============================================================================
   // PLAN TOOLS
   // ============================================================================
