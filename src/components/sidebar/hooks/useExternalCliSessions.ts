@@ -16,13 +16,19 @@ export function useExternalCliSessions(): ExternalCliSession[] {
 
   useEffect(() => {
     let cancelled = false;
+    // Generation guard: a delayed older response must not overwrite a newer
+    // snapshot (stale name could attach a terminal to a reused tmux session).
+    let generation = 0;
+    let applied = 0;
     const poll = async () => {
+      const myGeneration = ++generation;
       try {
         const response = await api.externalSessions();
         if (!response.ok) return;
         const body = await response.json();
         const list: ExternalCliSession[] = body?.data?.externalSessions ?? body?.externalSessions ?? [];
-        if (!cancelled) {
+        if (!cancelled && myGeneration > applied) {
+          applied = myGeneration;
           setSessions(list.filter((session) => session?.tmuxName && (session.kind === 'claude' || session.kind === 'codex')));
         }
       } catch {

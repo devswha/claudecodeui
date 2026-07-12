@@ -15,6 +15,7 @@ import mime from 'mime-types';
 import Database from 'better-sqlite3';
 
 import { AppError, WORKSPACES_ROOT, getOpenCodeDatabasePath, validateWorkspacePath } from '@/shared/utils.js';
+import { resolveProjectFileForRead, resolveProjectFileForWrite } from '@/shared/project-file-containment.js';
 import { closeSessionsWatcher, initializeSessionsWatcher } from '@/modules/providers/index.js';
 import { createWebSocketServer } from '@/modules/websocket/index.js';
 
@@ -475,7 +476,7 @@ app.get('/api/projects/:projectId/file', authenticateToken, async (req, res) => 
             return res.status(404).json({ error: 'Project not found' });
         }
 
-        // Handle both absolute and relative paths
+        // Handle both absolute and relative paths.
         const resolved = path.isAbsolute(filePath)
             ? path.resolve(filePath)
             : path.resolve(projectRoot, filePath);
@@ -484,8 +485,13 @@ app.get('/api/projects/:projectId/file', authenticateToken, async (req, res) => 
             return res.status(403).json({ error: 'Path must be under project root' });
         }
 
-        const content = await fsPromises.readFile(resolved, 'utf8');
-        res.json({ content, path: resolved });
+        const readablePath = await resolveProjectFileForRead(projectRoot, resolved);
+        if (!readablePath) {
+            return res.status(403).json({ error: 'Path must be under project root' });
+        }
+
+        const content = await fsPromises.readFile(readablePath, 'utf8');
+        res.json({ content, path: readablePath });
     } catch (error) {
         console.error('Error reading file:', error);
         if (error.code === 'ENOENT') {
@@ -526,19 +532,24 @@ app.get('/api/projects/:projectId/files/content', authenticateToken, async (req,
             return res.status(403).json({ error: 'Path must be under project root' });
         }
 
+        const readablePath = await resolveProjectFileForRead(projectRoot, resolved);
+        if (!readablePath) {
+            return res.status(403).json({ error: 'Path must be under project root' });
+        }
+
         // Check if file exists
         try {
-            await fsPromises.access(resolved);
+            await fsPromises.access(readablePath);
         } catch (error) {
             return res.status(404).json({ error: 'File not found' });
         }
 
         // Get file extension and set appropriate content type
-        const mimeType = mime.lookup(resolved) || 'application/octet-stream';
+        const mimeType = mime.lookup(readablePath) || 'application/octet-stream';
         res.setHeader('Content-Type', mimeType);
 
         // Stream the file
-        const fileStream = fs.createReadStream(resolved);
+        const fileStream = fs.createReadStream(readablePath);
         fileStream.pipe(res);
 
         fileStream.on('error', (error) => {
@@ -578,7 +589,7 @@ app.put('/api/projects/:projectId/file', authenticateToken, async (req, res) => 
             return res.status(404).json({ error: 'Project not found' });
         }
 
-        // Handle both absolute and relative paths
+        // Handle both absolute and relative paths.
         const resolved = path.isAbsolute(filePath)
             ? path.resolve(filePath)
             : path.resolve(projectRoot, filePath);
@@ -587,12 +598,17 @@ app.put('/api/projects/:projectId/file', authenticateToken, async (req, res) => 
             return res.status(403).json({ error: 'Path must be under project root' });
         }
 
+        const writablePath = await resolveProjectFileForWrite(projectRoot, resolved);
+        if (!writablePath) {
+            return res.status(403).json({ error: 'Path must be under project root' });
+        }
+
         // Write the new content
-        await fsPromises.writeFile(resolved, content, 'utf8');
+        await fsPromises.writeFile(writablePath, content, 'utf8');
 
         res.json({
             success: true,
-            path: resolved,
+            path: writablePath,
             message: 'File saved successfully'
         });
     } catch (error) {

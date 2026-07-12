@@ -1,5 +1,4 @@
 import fsSync from 'node:fs';
-import readline from 'node:readline';
 
 import { sessionsDb } from '@/modules/database/index.js';
 import type { IProviderSessions } from '@/shared/interfaces.js';
@@ -8,11 +7,139 @@ import { createNormalizedMessage, generateMessageId, readObjectRecord, sliceTail
 
 const PROVIDER = 'gjc';
 
-type GjcHistoryResult = {
-  messages: AnyRecord[];
-  tokenUsage?: unknown;
+const MAX_JSONL_LINE_BYTES = 32 * 1024 * 1024;
+const MAX_BUFFERED_HISTORY_RECORDS = 5_000;
+const MAX_BUFFERED_HISTORY_BYTES = 64 * 1024 * 1024;
+const PAGINATION_RECORD_HEADROOM = 100;
+
+type BufferedNormalizedMessage = {
+  message: NormalizedMessage;
+  byteLength: number;
 };
 
+/**
+ * Retains only the newest normalized transcript records. The byte limit accounts
+ * for the serialized record, which bounds the retained message strings and
+ * structured tool payloads without retaining an unbounded JSONL transcript.
+ */
+class NormalizedMessageRingBuffer {
+  private entries: Array<BufferedNormalizedMessage | undefined> = [];
+  private startIndex = 0;
+  private bufferedBytes = 0;
+
+  truncated = false;
+
+  constructor(
+    private readonly maxRecords: number,
+    private readonly maxBytes: number,
+  ) {}
+
+  push(message: NormalizedMessage): void {
+    const byteLength = Buffer.byteLength(JSON.stringify(message), 'utf8');
+
+    if (byteLength > this.maxBytes) {
+      this.truncated = true;
+      return;
+    }
+
+    while (
+      this.entries.length - this.startIndex >= this.maxRecords
+      || this.bufferedBytes + byteLength > this.maxBytes
+    ) {
+      const oldest = this.entries[this.startIndex];
+      if (!oldest) {
+        break;
+      }
+      this.entries[this.startIndex] = undefined;
+      this.startIndex += 1;
+      this.bufferedBytes -= oldest.byteLength;
+      this.truncated = true;
+    }
+
+    this.entries.push({ message, byteLength });
+    this.bufferedBytes += byteLength;
+
+    if (this.startIndex >= 1_024) {
+      this.entries = this.entries.slice(this.startIndex);
+      this.startIndex = 0;
+    }
+  }
+
+  get messages(): NormalizedMessage[] {
+    const messages: NormalizedMessage[] = [];
+    for (let index = this.startIndex; index < this.entries.length; index += 1) {
+      const entry = this.entries[index];
+      if (entry) {
+        messages.push(entry.message);
+      }
+    }
+    return messages;
+  }
+}
+
+function getHistoryBufferRecordLimit(limit: number | null, offset: number): number {
+  if (limit === null) {
+    return MAX_BUFFERED_HISTORY_RECORDS;
+  }
+
+  return Math.min(
+    MAX_BUFFERED_HISTORY_RECORDS,
+    Math.max(PAGINATION_RECORD_HEADROOM, limit + offset + PAGINATION_RECORD_HEADROOM),
+  );
+}
+
+/**
+ * Streams newline-delimited UTF-8 text while discarding a line as soon as it
+ * exceeds the cap. `readline` buffers an entire line before yielding it, which
+ * would allow a malformed multi-gigabyte JSONL record to exhaust server memory.
+ */
+async function* readBoundedJsonlLines(sessionFilePath: string): AsyncGenerator<string> {
+  const fileStream = fsSync.createReadStream(sessionFilePath);
+  let lineChunks: Buffer[] = [];
+  let lineByteLength = 0;
+  let discardingLine = false;
+
+  for await (const chunk of fileStream) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    let start = 0;
+
+    while (start < buffer.length) {
+      const newlineIndex = buffer.indexOf(0x0A, start);
+      const end = newlineIndex === -1 ? buffer.length : newlineIndex;
+      const segmentByteLength = end - start;
+
+      if (!discardingLine) {
+        if (lineByteLength + segmentByteLength > MAX_JSONL_LINE_BYTES) {
+          lineChunks = [];
+          lineByteLength = 0;
+          discardingLine = true;
+        } else if (segmentByteLength > 0) {
+          lineChunks.push(buffer.subarray(start, end));
+          lineByteLength += segmentByteLength;
+        }
+      }
+
+      if (newlineIndex === -1) {
+        break;
+      }
+
+      if (!discardingLine) {
+        const line = Buffer.concat(lineChunks, lineByteLength).toString('utf8');
+        yield line.endsWith('\r') ? line.slice(0, -1) : line;
+      }
+
+      lineChunks = [];
+      lineByteLength = 0;
+      discardingLine = false;
+      start = newlineIndex + 1;
+    }
+  }
+
+  if (!discardingLine && lineByteLength > 0) {
+    const line = Buffer.concat(lineChunks, lineByteLength).toString('utf8');
+    yield line.endsWith('\r') ? line.slice(0, -1) : line;
+  }
+}
 /**
  * Reads the text body of a gjc content part (`text` or `thinking`).
  */
@@ -27,31 +154,26 @@ function extractGjcPartText(part: AnyRecord): string {
 }
 
 /**
- * Reads a gjc JSONL transcript and flattens `type:"message"` lines into the
+ * Streams a gjc JSONL transcript and flattens `type:"message"` lines into the
  * compact intermediate shape consumed by `normalizeHistoryEntry`.
  *
- * Only message lines are processed; header (`type:"session"`) and control
- * events (`model_change`, `thinking_level_change`, `custom`, ...) are ignored.
- * Each `message.content[]` part becomes its own intermediate record with a
- * unique id so multi-part turns never collide.
+ * Only displayable user, assistant, and tool-result messages are processed;
+ * header and control events are ignored. Each `message.content[]` part becomes
+ * its own intermediate record with a unique id so multi-part turns never collide.
  */
-async function getGjcSessionMessages(sessionId: string): Promise<GjcHistoryResult> {
+async function streamGjcSessionMessages(
+  sessionId: string,
+  onMessage: (message: AnyRecord) => void,
+): Promise<void> {
   try {
     const sessionFilePath = sessionsDb.getSessionById(sessionId)?.jsonl_path;
 
     if (!sessionFilePath) {
       console.warn(`gjc session file not found for session ${sessionId}`);
-      return { messages: [] };
+      return;
     }
 
-    const messages: AnyRecord[] = [];
-    const fileStream = fsSync.createReadStream(sessionFilePath);
-    const rl = readline.createInterface({
-      input: fileStream,
-      crlfDelay: Infinity,
-    });
-
-    for await (const line of rl) {
+    for await (const line of readBoundedJsonlLines(sessionFilePath)) {
       if (!line.trim()) {
         continue;
       }
@@ -62,12 +184,16 @@ async function getGjcSessionMessages(sessionId: string): Promise<GjcHistoryResul
           continue;
         }
 
-        const message = entry.message as AnyRecord | undefined;
-        if (!message) {
+        const message = readObjectRecord(entry.message);
+        if (!message || message.display === false) {
           continue;
         }
 
-        const role = typeof message.role === 'string' ? message.role : 'assistant';
+        const role = typeof message.role === 'string' ? message.role : '';
+        if (role !== 'user' && role !== 'assistant' && role !== 'toolResult') {
+          continue;
+        }
+
         const timestamp = entry.timestamp;
         const entryId = typeof entry.id === 'string'
           ? entry.id
@@ -91,7 +217,7 @@ async function getGjcSessionMessages(sessionId: string): Promise<GjcHistoryResul
               return typeof text === 'string' ? text : '';
             })
             .join('');
-          messages.push({
+          onMessage({
             uuid: `${entryId}:toolresult`,
             type: 'tool_result',
             timestamp,
@@ -118,11 +244,11 @@ async function getGjcSessionMessages(sessionId: string): Promise<GjcHistoryResul
               if (!text.trim()) {
                 break;
               }
-              messages.push({
+              onMessage({
                 uuid: `${partId}:text`,
                 timestamp,
                 message: {
-                  role: role === 'assistant' ? 'assistant' : 'user',
+                  role,
                   content: text,
                 },
               });
@@ -133,7 +259,7 @@ async function getGjcSessionMessages(sessionId: string): Promise<GjcHistoryResul
               if (!text.trim()) {
                 break;
               }
-              messages.push({
+              onMessage({
                 uuid: `${partId}:thinking`,
                 type: 'thinking',
                 timestamp,
@@ -145,7 +271,7 @@ async function getGjcSessionMessages(sessionId: string): Promise<GjcHistoryResul
               break;
             }
             case 'toolCall': {
-              messages.push({
+              onMessage({
                 uuid: `${partId}:toolcall`,
                 type: 'tool_use',
                 timestamp,
@@ -156,7 +282,7 @@ async function getGjcSessionMessages(sessionId: string): Promise<GjcHistoryResul
               break;
             }
             case 'toolResult': {
-              messages.push({
+              onMessage({
                 uuid: `${partId}:toolresult`,
                 type: 'tool_result',
                 timestamp,
@@ -174,15 +300,8 @@ async function getGjcSessionMessages(sessionId: string): Promise<GjcHistoryResul
         // Skip malformed lines.
       }
     }
-
-    messages.sort(
-      (a, b) => new Date(a.timestamp || 0).getTime() - new Date(b.timestamp || 0).getTime(),
-    );
-
-    return { messages, tokenUsage: null };
   } catch (error) {
     console.error(`Error reading gjc session messages for ${sessionId}:`, error);
-    return { messages: [] };
   }
 }
 
@@ -298,23 +417,34 @@ export class GjcSessionsProvider implements IProviderSessions {
     options: FetchHistoryOptions = {},
   ): Promise<FetchHistoryResult> {
     const { limit = null, offset = 0 } = options;
+    const normalizedOffset = Math.max(0, offset);
+    const normalizedLimit = limit === null ? null : Math.max(0, limit);
+    const messageBuffer = new NormalizedMessageRingBuffer(
+      getHistoryBufferRecordLimit(normalizedLimit, normalizedOffset),
+      MAX_BUFFERED_HISTORY_BYTES,
+    );
 
-    let result: GjcHistoryResult;
     try {
-      result = await getGjcSessionMessages(sessionId);
+      await streamGjcSessionMessages(sessionId, (rawMessage) => {
+        for (const message of this.normalizeHistoryEntry(rawMessage, sessionId)) {
+          messageBuffer.push(message);
+        }
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.warn(`[GjcProvider] Failed to load session ${sessionId}:`, message);
-      return { messages: [], total: 0, hasMore: false, offset: 0, limit: null };
+      return {
+        messages: [],
+        total: 0,
+        hasMore: false,
+        offset: normalizedOffset,
+        limit: normalizedLimit,
+      };
     }
 
-    const rawMessages = result.messages;
-    const tokenUsage = result.tokenUsage;
-
-    const normalized: NormalizedMessage[] = [];
-    for (const raw of rawMessages) {
-      normalized.push(...this.normalizeHistoryEntry(raw, sessionId));
-    }
+    const normalized = messageBuffer.messages.sort(
+      (a, b) => new Date(a.timestamp || 0).getTime() - new Date(b.timestamp || 0).getTime(),
+    );
 
     const toolResultMap = new Map<string, NormalizedMessage>();
     for (const msg of normalized) {
@@ -331,23 +461,23 @@ export class GjcSessionsProvider implements IProviderSessions {
       }
     }
 
-    let total = 0;
-    for (const msg of normalized) {
-      if (msg.kind !== 'tool_result') {
-        total += 1;
-      }
-    }
-    const normalizedOffset = Math.max(0, offset);
-    const normalizedLimit = limit === null ? null : Math.max(0, limit);
-    const { page, hasMore } = sliceTailPage(normalized, normalizedLimit, normalizedOffset);
+    // Tool results render inside their call, never as standalone timeline rows.
+    // When the bounded ring has discarded older rows, `total` is a lower bound;
+    // `hasMore` remains true so callers know the complete history was not retained.
+    const visibleMessages = normalized.filter((msg) => msg.kind !== 'tool_result');
+    const { page, hasMore: pageHasMore } = sliceTailPage(
+      visibleMessages,
+      normalizedLimit,
+      normalizedOffset,
+    );
 
     return {
       messages: page,
-      total,
-      hasMore,
+      total: visibleMessages.length,
+      hasMore: pageHasMore || messageBuffer.truncated,
       offset: normalizedOffset,
       limit: normalizedLimit,
-      tokenUsage,
+      tokenUsage: null,
     };
   }
 }

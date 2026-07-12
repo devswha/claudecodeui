@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { FolderOpen, Pencil, X } from 'lucide-react';
 
 import type { Project } from '../../../../types/app';
@@ -15,9 +15,9 @@ const ROOT_STORAGE_KEY = 'files-panel-root';
 const DEFAULT_ROOT = 'workspace';
 
 type PanelState =
-  | { kind: 'loading' }
-  | { kind: 'ready'; project: Project }
-  | { kind: 'error'; text: string };
+  | { kind: 'loading'; root: string }
+  | { kind: 'ready'; root: string; project: Project }
+  | { kind: 'error'; root: string; text: string };
 
 function readStoredRoot(): string {
   try {
@@ -32,24 +32,33 @@ function readStoredRoot(): string {
  * folder (home-relative, persisted in localStorage) — deliberately NOT tied to
  * the selected session/project. Files open in the existing editor sidebar via
  * `onFileOpen(path, projectId)`; the projectId belongs to the root's own
- * project row (find-or-create through /create-project, 409 → lookup), so
+ * project row (find-or-create through /create-project, including its 409 response), so
  * content read/save stays correctly scoped.
  */
 export default function FilesPanel({ onFileOpen, onClose }: FilesPanelProps) {
-  const [root, setRoot] = useState(readStoredRoot);
+  const initialRootRef = useRef(readStoredRoot());
+  const [state, setState] = useState<PanelState>({ kind: 'loading', root: initialRootRef.current });
   const [draftRoot, setDraftRoot] = useState('');
   const [editingRoot, setEditingRoot] = useState(false);
-  const [state, setState] = useState<PanelState>({ kind: 'loading' });
+  const rootRequestIdRef = useRef(0);
+  const root = state.root;
 
   const resolveRoot = useCallback(async (relativeRoot: string) => {
-    setState({ kind: 'loading' });
+    const requestId = ++rootRequestIdRef.current;
+    const publishIfCurrent = (nextState: PanelState) => {
+      if (requestId === rootRequestIdRef.current) {
+        setState(nextState);
+      }
+    };
+
+    setState({ kind: 'loading', root: relativeRoot });
     try {
       // The dir-suggestions endpoint also reports the absolute HOME path.
       const homeResponse = await api.dirSuggestions('');
       const homeBody = await homeResponse.json();
       const home: string = homeBody?.data?.home ?? '';
       if (!home) {
-        setState({ kind: 'error', text: '홈 경로를 확인할 수 없습니다' });
+        publishIfCurrent({ kind: 'error', root: relativeRoot, text: '홈 경로를 확인할 수 없습니다' });
         return;
       }
       const absolutePath = `${home}/${relativeRoot.replace(/\/+$/, '')}`;
@@ -66,31 +75,26 @@ export default function FilesPanel({ onFileOpen, onClose }: FilesPanelProps) {
         const body = await createResponse.json();
         const row = body?.project ?? body?.data?.project;
         if (row) {
-          setState({ kind: 'ready', project: toProject(row) });
+          publishIfCurrent({ kind: 'ready', root: relativeRoot, project: toProject(row) });
           return;
         }
       } else if (createResponse.status === 409) {
-        // Already an active project — find it in the projects list.
-        const listResponse = await api.projects();
-        const listBody = await listResponse.json();
-        const projects: Array<Record<string, unknown>> = listBody?.data?.projects ?? listBody?.projects ?? listBody ?? [];
-        const match = Array.isArray(projects)
-          ? projects.find((p) => p.fullPath === absolutePath || p.path === absolutePath)
-          : undefined;
-        if (match) {
-          setState({ kind: 'ready', project: match as unknown as Project });
+        const body = await createResponse.json();
+        const row = body?.error?.details?.project;
+        if (row) {
+          publishIfCurrent({ kind: 'ready', root: relativeRoot, project: toProject(row) });
           return;
         }
       }
-      setState({ kind: 'error', text: '폴더를 열 수 없습니다 — 경로를 확인하세요' });
+      publishIfCurrent({ kind: 'error', root: relativeRoot, text: '폴더를 열 수 없습니다 — 경로를 확인하세요' });
     } catch {
-      setState({ kind: 'error', text: '폴더를 열 수 없습니다 — 경로를 확인하세요' });
+      publishIfCurrent({ kind: 'error', root: relativeRoot, text: '폴더를 열 수 없습니다 — 경로를 확인하세요' });
     }
   }, []);
 
   useEffect(() => {
-    void resolveRoot(root);
-  }, [root, resolveRoot]);
+    void resolveRoot(initialRootRef.current);
+  }, [resolveRoot]);
 
   const applyDraftRoot = () => {
     const next = draftRoot.trim().replace(/\/+$/, '');
@@ -101,7 +105,7 @@ export default function FilesPanel({ onFileOpen, onClose }: FilesPanelProps) {
       // storage errors are non-fatal
     }
     setEditingRoot(false);
-    setRoot(next);
+    void resolveRoot(next);
   };
 
   return (

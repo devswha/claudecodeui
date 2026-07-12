@@ -207,6 +207,118 @@ test('gjc sessions provider normalizes message content parts and folds tool resu
     await rm(tempRoot, { recursive: true, force: true });
   }
 });
+test('gjc sessions provider excludes hidden and internal-role messages from history', { concurrency: false }, async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'gjc-session-hidden-history-'));
+  const workspacePath = path.join(tempRoot, 'workspace');
+  const sessionsDir = path.join(tempRoot, '.gjc', 'agent', 'sessions', '-workspace');
+  await mkdir(workspacePath, { recursive: true });
+  await mkdir(sessionsDir, { recursive: true });
+  const restoreHomeDir = patchHomeDir(tempRoot);
+
+  try {
+    const lines = [
+      JSON.stringify({ type: 'session', version: 3, id: 'gjc-hidden-history', timestamp: '2026-07-09T00:00:00.000Z', cwd: workspacePath }),
+      JSON.stringify({ type: 'message', id: 'hidden', timestamp: '2026-07-09T00:00:01.000Z', message: { role: 'user', display: false, content: [{ type: 'text', text: 'Do not show me' }] } }),
+      JSON.stringify({ type: 'message', id: 'custom', timestamp: '2026-07-09T00:00:02.000Z', message: { role: 'custom', content: [{ type: 'text', text: 'volatile-project-context' }] } }),
+      JSON.stringify({ type: 'message', id: 'developer', timestamp: '2026-07-09T00:00:03.000Z', message: { role: 'developer', content: [{ type: 'text', text: 'Internal instructions' }] } }),
+      JSON.stringify({ type: 'message', id: 'hook', timestamp: '2026-07-09T00:00:04.000Z', message: { role: 'hook', content: [{ type: 'text', text: 'Hook output' }] } }),
+      JSON.stringify({ type: 'message', id: 'user', timestamp: '2026-07-09T00:00:05.000Z', message: { role: 'user', content: [{ type: 'text', text: 'Visible question' }] } }),
+      JSON.stringify({ type: 'message', id: 'assistant', timestamp: '2026-07-09T00:00:06.000Z', message: { role: 'assistant', content: [{ type: 'text', text: 'Visible answer' }] } }),
+    ];
+    await writeFile(
+      path.join(sessionsDir, '2026-07-09T00-00-00_gjc-hidden-history.jsonl'),
+      `${lines.join('\n')}\n`,
+      'utf8',
+    );
+
+    await withIsolatedDatabase(async () => {
+      await new GjcSessionSynchronizer().synchronize();
+
+      const history = await new GjcSessionsProvider().fetchHistory('gjc-hidden-history');
+
+      assert.equal(history.total, 2);
+      assert.deepEqual(
+        history.messages.map((message) => message.content),
+        ['Visible question', 'Visible answer'],
+      );
+    });
+  } finally {
+    restoreHomeDir();
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('gjc sessions provider returns a folded tool call for the newest one-message page', { concurrency: false }, async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'gjc-session-tail-history-'));
+  const workspacePath = path.join(tempRoot, 'workspace');
+  await mkdir(workspacePath, { recursive: true });
+  const restoreHomeDir = patchHomeDir(tempRoot);
+
+  try {
+    await writeGjcTranscript(tempRoot, 'gjc-tail-history', workspacePath, {
+      firstUserMessage: 'Question?',
+      withConversation: true,
+    });
+    await withIsolatedDatabase(async () => {
+      await new GjcSessionSynchronizer().synchronize();
+
+      const history = await new GjcSessionsProvider().fetchHistory('gjc-tail-history', { limit: 1 });
+
+      assert.equal(history.total, 4);
+      assert.equal(history.messages.length, 1);
+      assert.equal(history.messages[0]?.kind, 'tool_use');
+      assert.deepEqual(history.messages[0]?.toolResult, { content: 'file.txt', isError: false });
+    });
+  } finally {
+    restoreHomeDir();
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('gjc sessions provider keeps only the bounded normalized history tail', { concurrency: false }, async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'gjc-session-ring-history-'));
+  const workspacePath = path.join(tempRoot, 'workspace');
+  const sessionsDir = path.join(tempRoot, '.gjc', 'agent', 'sessions', '-workspace');
+  await mkdir(workspacePath, { recursive: true });
+  await mkdir(sessionsDir, { recursive: true });
+  const restoreHomeDir = patchHomeDir(tempRoot);
+
+  try {
+    const messageCount = 5_001;
+    const startTime = Date.parse('2026-07-09T00:00:00.000Z');
+    const lines = [
+      JSON.stringify({ type: 'session', version: 3, id: 'gjc-ring-history', timestamp: '2026-07-09T00:00:00.000Z', cwd: workspacePath }),
+    ];
+    for (let index = 0; index < messageCount; index += 1) {
+      lines.push(JSON.stringify({
+        type: 'message',
+        id: `message-${index}`,
+        timestamp: new Date(startTime + index).toISOString(),
+        message: { role: 'user', content: [{ type: 'text', text: `message-${index}` }] },
+      }));
+    }
+    await writeFile(
+      path.join(sessionsDir, '2026-07-09T00-00-00_gjc-ring-history.jsonl'),
+      `${lines.join('\n')}\n`,
+      'utf8',
+    );
+
+    await withIsolatedDatabase(async () => {
+      await new GjcSessionSynchronizer().synchronize();
+
+      const history = await new GjcSessionsProvider().fetchHistory('gjc-ring-history');
+
+      assert.equal(history.total, 5_000);
+      assert.equal(history.messages.length, 5_000);
+      assert.equal(history.messages[0]?.content, 'message-1');
+      assert.equal(history.messages.at(-1)?.content, 'message-5000');
+      assert.equal(history.hasMore, true);
+    });
+  } finally {
+    restoreHomeDir();
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
 
 test('gjc synchronizer excludes subagent transcripts inside session sidecar dirs', { concurrency: false }, async () => {
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'gjc-subagent-'));
