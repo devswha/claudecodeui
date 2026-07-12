@@ -19,6 +19,10 @@ type SidebarLiveSectionProps = {
   // `$N` tmux generation token per id — sent with kill so the server refuses a
   // same-named session recreated after this snapshot (409).
   liveSessionTmuxIds: ReadonlyMap<string, string>;
+  // Foreground-command classification per id ('interactive' | 'batch'). A batch
+  // gjc (a background/child gjc under a shell) is badged apart from an
+  // interactive gjc TUI. Presentational only — kill/relay still key off lineage.
+  liveSessionKinds: ReadonlyMap<string, string>;
   selectedSession: ProjectSession | null;
   onSessionSelect: SidebarProjectListProps['onSessionSelect'];
 };
@@ -61,6 +65,7 @@ export default function SidebarLiveSection({
   liveSessionNames,
   liveSessionLineage,
   liveSessionTmuxIds,
+  liveSessionKinds,
   selectedSession,
   onSessionSelect,
 }: SidebarLiveSectionProps) {
@@ -240,6 +245,14 @@ export default function SidebarLiveSection({
                     <span className="shrink-0 rounded bg-blue-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-blue-600 dark:text-blue-400">
                       LIVE
                     </span>
+                    {liveSessionKinds.get(session.id) === 'batch' && (
+                      <span
+                        className="shrink-0 rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-600 dark:text-amber-400"
+                        title="이 tmux pane의 전면 명령이 gjc가 아닙니다 — gjc는 배치(백그라운드) 자손으로 실행 중"
+                      >
+                        배치
+                      </span>
+                    )}
                     <span className="truncate text-sm font-medium text-foreground">{primary}</span>
                   </span>
                   <span className="truncate pl-[1.375rem] text-[11px] text-muted-foreground">
@@ -271,6 +284,14 @@ export default function SidebarLiveSection({
                     >
                       {isIdle ? '대기' : 'LIVE'}
                     </span>
+                    {liveSessionKinds.get(id) === 'batch' && (
+                      <span
+                        className="shrink-0 rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-600 dark:text-amber-400"
+                        title="이 tmux pane의 전면 명령이 gjc가 아닙니다 — gjc는 배치(백그라운드) 자손으로 실행 중"
+                      >
+                        배치
+                      </span>
+                    )}
                     <span className="truncate text-sm font-medium text-foreground">
                       {tmuxName ?? '이름 미확인 세션'}
                     </span>

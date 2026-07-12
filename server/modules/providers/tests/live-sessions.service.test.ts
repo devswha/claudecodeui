@@ -18,11 +18,18 @@ test('tmuxHasPanes detects a running tmux server (>=1 pane line)', () => {
   assert.equal(tmuxHasPanes(''), false);
 });
 
-test('parseTmuxPanes splits session_name<TAB>session_id<TAB>pane_pid<TAB>cwd (cwd may contain spaces)', () => {
-  const out = parseTmuxPanes('omg\t$1\t111\t/home/u/workspace/oh-my-gjc\nstock\t$2\t222\t/home/u/workspace/magi stock\n\nbad-line\nnosid\tX9\t333\t/tmp\n');
+test('parseTmuxPanes splits name<TAB>sid<TAB>pid<TAB>pane_current_command<TAB>cwd (cwd may contain spaces; empty cmd tolerated)', () => {
+  const out = parseTmuxPanes(
+    'omg\t$1\t111\tgjc\t/home/u/workspace/oh-my-gjc\n' +
+    'stock\t$2\t222\tbash\t/home/u/workspace/magi stock\n' +
+    'noc\t$3\t444\t\t/tmp/x\n' +
+    '\nbad-line\nnosid\tX9\t333\tgjc\t/tmp\n',
+  );
   assert.deepEqual(out, [
-    { name: 'omg', sid: '$1', pid: 111, cwd: '/home/u/workspace/oh-my-gjc' },
-    { name: 'stock', sid: '$2', pid: 222, cwd: '/home/u/workspace/magi stock' },
+    { name: 'omg', sid: '$1', pid: 111, cmd: 'gjc', cwd: '/home/u/workspace/oh-my-gjc' },
+    { name: 'stock', sid: '$2', pid: 222, cmd: 'bash', cwd: '/home/u/workspace/magi stock' },
+    // Empty pane_current_command still parses (cmd '') — kind falls back to null.
+    { name: 'noc', sid: '$3', pid: 444, cmd: '', cwd: '/tmp/x' },
   ]);
 });
 
@@ -56,11 +63,50 @@ test('computeLiveSessions maps each live session to its tmux name+id by pid line
       { id: 'n1', pidChain: [], cwd: null },
     ],
   });
+  // No pane_current_command supplied → kind falls back to null (existing behaviour preserved).
   assert.deepEqual(result.sort((a, b) => a.id.localeCompare(b.id)), [
-    { id: 'f1', tmuxName: 'flask', tmuxId: '$2', claim: 'lineage' },
-    { id: 'n1', tmuxName: null, tmuxId: null, claim: null },
-    { id: 'p1', tmuxName: 'patina', tmuxId: '$1', claim: 'lineage' },
-    { id: 'x1', tmuxName: null, tmuxId: null, claim: null },
+    { id: 'f1', tmuxName: 'flask', tmuxId: '$2', claim: 'lineage', kind: null },
+    { id: 'n1', tmuxName: null, tmuxId: null, claim: null, kind: null },
+    { id: 'p1', tmuxName: 'patina', tmuxId: '$1', claim: 'lineage', kind: null },
+    { id: 'x1', tmuxName: null, tmuxId: null, claim: null, kind: null },
+  ]);
+});
+
+test('computeLiveSessions classifies lineage rows by the claimed pane foreground command (interactive vs batch)', () => {
+  const result = computeLiveSessions({
+    tmuxPresent: true,
+    panes: [
+      // foreground command IS gjc → an interactive gjc TUI
+      { name: 'omg', sid: '$1', pid: 1000, cwd: '/w/omg', cmd: 'gjc' },
+      // gjc is a background/batch child under a shell → the pane foreground is bash
+      { name: 'stock', sid: '$2', pid: 2000, cwd: '/w/stock', cmd: 'bash' },
+    ],
+    sessions: [
+      { id: 'i1', pidChain: [1500, 1000], cwd: '/w/omg' },
+      { id: 'b1', pidChain: [2500, 2000], cwd: '/w/stock' },
+    ],
+  });
+  assert.deepEqual(result.sort((a, b) => a.id.localeCompare(b.id)), [
+    { id: 'b1', tmuxName: 'stock', tmuxId: '$2', claim: 'lineage', kind: 'batch' },
+    { id: 'i1', tmuxName: 'omg', tmuxId: '$1', claim: 'lineage', kind: 'interactive' },
+  ]);
+});
+
+test('computeLiveSessions: cwd-label rows and unknown-command lineage rows fall back to kind=null', () => {
+  const result = computeLiveSessions({
+    tmuxPresent: true,
+    panes: [
+      { name: 'omg', sid: '$1', pid: 1000, cwd: '/w/omg' },              // lineage, no cmd → null fallback
+      { name: 'lbl', sid: '$9', pid: 9000, cwd: '/w/lbl', cmd: 'bash' }, // cwd-label pane (gjc not inside)
+    ],
+    sessions: [
+      { id: 'a', pidChain: [1500, 1000], cwd: '/w/omg' }, // lineage but pane has no cmd
+      { id: 'c', pidChain: [7777], cwd: '/w/lbl' },       // no lineage → unique cwd fallback
+    ],
+  });
+  assert.deepEqual(result.sort((x, y) => x.id.localeCompare(y.id)), [
+    { id: 'a', tmuxName: 'omg', tmuxId: '$1', claim: 'lineage', kind: null },
+    { id: 'c', tmuxName: 'lbl', tmuxId: '$9', claim: 'cwd', kind: null },
   ]);
 });
 
@@ -80,8 +126,8 @@ test('computeLiveSessions disambiguates two panes in the same cwd via pid lineag
     ],
   });
   assert.deepEqual(result.sort((a, b) => a.id.localeCompare(b.id)), [
-    { id: '019f212c', tmuxName: 'omg', tmuxId: '$3', claim: 'lineage' },
-    { id: '019f469d', tmuxName: 'patina', tmuxId: '$1', claim: 'lineage' },
+    { id: '019f212c', tmuxName: 'omg', tmuxId: '$3', claim: 'lineage', kind: null },
+    { id: '019f469d', tmuxName: 'patina', tmuxId: '$1', claim: 'lineage', kind: null },
   ]);
 });
 
@@ -99,8 +145,8 @@ test('computeLiveSessions never double-labels a pane: cwd fallback skips a linea
     ],
   });
   assert.deepEqual(result.sort((a, b) => a.id.localeCompare(b.id)), [
-    { id: '019f212c', tmuxName: null, tmuxId: null, claim: null },
-    { id: '019f469d', tmuxName: 'patina', tmuxId: '$1', claim: 'lineage' },
+    { id: '019f212c', tmuxName: null, tmuxId: null, claim: null, kind: null },
+    { id: '019f469d', tmuxName: 'patina', tmuxId: '$1', claim: 'lineage', kind: null },
   ]);
 });
 
@@ -112,8 +158,8 @@ test('computeLiveSessions falls back to cwd when the lineage misses and the pane
     // a single unclaimed pane.
     sessions: [{ id: 'o1', pidChain: [7777, 1], cwd: '/home/devswha/workspace/oh-my-gjc' }],
   });
-  // cwd fallback names the row but is LABEL-ONLY: claim 'cwd' (no kill/relay).
-  assert.deepEqual(result, [{ id: 'o1', tmuxName: 'omg', tmuxId: '$4', claim: 'cwd' }]);
+  // cwd fallback names the row but is LABEL-ONLY: claim 'cwd' (no kill/relay), kind null.
+  assert.deepEqual(result, [{ id: 'o1', tmuxName: 'omg', tmuxId: '$4', claim: 'cwd', kind: null }]);
 });
 
 test('computeLiveSessions cwd fallback yields null when multiple unclaimed panes share the cwd', () => {
@@ -126,7 +172,7 @@ test('computeLiveSessions cwd fallback yields null when multiple unclaimed panes
     // no lineage hit and the cwd matches two panes → ambiguous → null
     sessions: [{ id: 'a1', pidChain: [999], cwd: '/home/devswha/workspace' }],
   });
-  assert.deepEqual(result, [{ id: 'a1', tmuxName: null, tmuxId: null, claim: null }]);
+  assert.deepEqual(result, [{ id: 'a1', tmuxName: null, tmuxId: null, claim: null, kind: null }]);
 });
 
 test('computeLiveSessions merges holder rows by id (worker + main): either reaching the pane names it', () => {
@@ -139,7 +185,7 @@ test('computeLiveSessions merges holder rows by id (worker + main): either reach
       { id: 's1', pidChain: [3435700], cwd: null },
     ],
   });
-  assert.deepEqual(result, [{ id: 's1', tmuxName: 'stock', tmuxId: '$7', claim: 'lineage' }]);
+  assert.deepEqual(result, [{ id: 's1', tmuxName: 'stock', tmuxId: '$7', claim: 'lineage', kind: null }]);
 });
 
 test('computeLiveSessions returns empty when no tmux (graceful degradation)', () => {
@@ -190,29 +236,38 @@ test('parseLastModelChange returns null when no model_change is present', () => 
   assert.equal(parseLastModelChange(''), null);
 });
 
-// ─── findIdleGjcTmuxSessions (첫 대화 전 gjc pane 감지) ──────────────────────
+// ─── findIdleGjcTmuxSessions (첫 대화 전 gjc pane 감지 + interactive/batch 분류) ───
 
-test('findIdleGjcTmuxSessions: gjc pane with no live claim surfaces (실측: 재시작 직후 flask)', () => {
+test('findIdleGjcTmuxSessions: a foreground-gjc pane with no live claim surfaces as interactive', () => {
   // The pane command IS gjc but it has no open transcript → the lsof pipeline
   // misses it entirely; the idle lane must still list the tmux session.
   const result = findIdleGjcTmuxSessions({
-    panes: [{ name: 'flask', sid: '$10', pid: 100 }],
+    panes: [{ name: 'flask', sid: '$10', pid: 100, cmd: 'gjc' }],
     procs: [{ pid: 100, ppid: 1, comm: 'gjc' }],
     excludedNames: new Set(),
   });
-  assert.deepEqual(result, [{ name: 'flask', sid: '$10' }]);
+  assert.deepEqual(result, [{ name: 'flask', sid: '$10', kind: 'interactive' }]);
 });
 
-test('findIdleGjcTmuxSessions: gjc as a pane DESCENDANT counts (shell → gjc)', () => {
+test('findIdleGjcTmuxSessions: gjc as a pane DESCENDANT (shell foreground) surfaces as batch', () => {
   const result = findIdleGjcTmuxSessions({
-    panes: [{ name: 'omg3', sid: '$11', pid: 200 }],
+    panes: [{ name: 'omg3', sid: '$11', pid: 200, cmd: 'zsh' }],
     procs: [
       { pid: 200, ppid: 1, comm: 'zsh' },
       { pid: 201, ppid: 200, comm: 'gjc' },
     ],
     excludedNames: new Set(),
   });
-  assert.deepEqual(result, [{ name: 'omg3', sid: '$11' }]);
+  assert.deepEqual(result, [{ name: 'omg3', sid: '$11', kind: 'batch' }]);
+});
+
+test('findIdleGjcTmuxSessions: a surfaced pane with no cmd falls back to kind=null', () => {
+  const result = findIdleGjcTmuxSessions({
+    panes: [{ name: 'flask', sid: '$10', pid: 100 }],
+    procs: [{ pid: 100, ppid: 1, comm: 'gjc' }],
+    excludedNames: new Set(),
+  });
+  assert.deepEqual(result, [{ name: 'flask', sid: '$10', kind: null }]);
 });
 
 test('findIdleGjcTmuxSessions: names claimed by a LINEAGE row are excluded (one actionable row per tmux)', () => {
@@ -220,8 +275,8 @@ test('findIdleGjcTmuxSessions: names claimed by a LINEAGE row are excluded (one 
   // subtree-proven idle pane (리뷰 반영) — callers pass lineage names here.
   const result = findIdleGjcTmuxSessions({
     panes: [
-      { name: 'horcrux', sid: '$12', pid: 300 },
-      { name: 'flask', sid: '$13', pid: 400 },
+      { name: 'horcrux', sid: '$12', pid: 300, cmd: 'gjc' },
+      { name: 'flask', sid: '$13', pid: 400, cmd: 'gjc' },
     ],
     procs: [
       { pid: 300, ppid: 1, comm: 'gjc' },
@@ -229,14 +284,14 @@ test('findIdleGjcTmuxSessions: names claimed by a LINEAGE row are excluded (one 
     ],
     excludedNames: new Set(['horcrux']),
   });
-  assert.deepEqual(result, [{ name: 'flask', sid: '$13' }]);
+  assert.deepEqual(result, [{ name: 'flask', sid: '$13', kind: 'interactive' }]);
 });
 
 test('findIdleGjcTmuxSessions: non-gjc panes (claude/codex/ssh) never surface here', () => {
   const result = findIdleGjcTmuxSessions({
     panes: [
-      { name: 'patina', sid: '$14', pid: 500 },
-      { name: 'test', sid: '$15', pid: 600 },
+      { name: 'patina', sid: '$14', pid: 500, cmd: 'claude' },
+      { name: 'test', sid: '$15', pid: 600, cmd: 'node' },
     ],
     procs: [
       { pid: 500, ppid: 1, comm: 'claude' },
@@ -251,9 +306,9 @@ test('findIdleGjcTmuxSessions: non-gjc panes (claude/codex/ssh) never surface he
 test('findIdleGjcTmuxSessions: unsafe tmux names are dropped (kill/relay discipline)', () => {
   const result = findIdleGjcTmuxSessions({
     panes: [
-      { name: 'ok.name-1', sid: '$16', pid: 700 },
-      { name: 'bad name;$(x)', sid: '$17', pid: 800 },
-      { name: '-leading-dash', sid: '$18', pid: 900 },
+      { name: 'ok.name-1', sid: '$16', pid: 700, cmd: 'gjc' },
+      { name: 'bad name;$(x)', sid: '$17', pid: 800, cmd: 'gjc' },
+      { name: '-leading-dash', sid: '$18', pid: 900, cmd: 'gjc' },
     ],
     procs: [
       { pid: 700, ppid: 1, comm: 'gjc' },
@@ -262,15 +317,15 @@ test('findIdleGjcTmuxSessions: unsafe tmux names are dropped (kill/relay discipl
     ],
     excludedNames: new Set(),
   });
-  assert.deepEqual(result, [{ name: 'ok.name-1', sid: '$16' }]);
+  assert.deepEqual(result, [{ name: 'ok.name-1', sid: '$16', kind: 'interactive' }]);
 });
 
 test('findIdleGjcTmuxSessions: sorted and deduped across multiple panes of one session', () => {
   const result = findIdleGjcTmuxSessions({
     panes: [
-      { name: 'zeta', sid: '$20', pid: 1000 },
-      { name: 'alpha', sid: '$21', pid: 1100 },
-      { name: 'zeta', sid: '$20', pid: 1200 },
+      { name: 'zeta', sid: '$20', pid: 1000, cmd: 'gjc' },
+      { name: 'alpha', sid: '$21', pid: 1100, cmd: 'gjc' },
+      { name: 'zeta', sid: '$20', pid: 1200, cmd: 'gjc' },
     ],
     procs: [
       { pid: 1000, ppid: 1, comm: 'gjc' },
@@ -280,8 +335,8 @@ test('findIdleGjcTmuxSessions: sorted and deduped across multiple panes of one s
     excludedNames: new Set(),
   });
   assert.deepEqual(result, [
-    { name: 'alpha', sid: '$21' },
-    { name: 'zeta', sid: '$20' },
+    { name: 'alpha', sid: '$21', kind: 'interactive' },
+    { name: 'zeta', sid: '$20', kind: 'interactive' },
   ]);
 });
 

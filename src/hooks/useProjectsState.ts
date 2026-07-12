@@ -369,6 +369,10 @@ export function useProjectsState({
   // session). Only these may carry tmux actions (kill/relay) — cwd-fallback
   // labels killed an unrelated claude tmux session (patina 실사고).
   const [liveSessionLineage, setLiveSessionLineage] = useState<Set<string>>(new Set());
+  // Foreground-command classification per live id ('interactive' | 'batch'):
+  // a batch gjc descendant under a shell is badged apart from an interactive
+  // gjc TUI. Presentational only — never gates tmux actions.
+  const [liveSessionKinds, setLiveSessionKinds] = useState<Map<string, string>>(new Map());
   // `$N` tmux generation token per session id — sent with kill/relay so the
   // server can refuse a same-named session recreated after this snapshot.
   const [liveSessionTmuxIds, setLiveSessionTmuxIds] = useState<Map<string, string>>(new Map());
@@ -395,7 +399,7 @@ export function useProjectsState({
     let cancelled = false;
     let generation = 0;
     let applied = 0;
-    let prevRows = new Map<string, { tmuxName: string | null; tmuxId: string | null; model: string | null; lineage: boolean }>();
+    let prevRows = new Map<string, { tmuxName: string | null; tmuxId: string | null; model: string | null; lineage: boolean; kind: string | null }>();
     let missedOnce = new Set<string>();
     const poll = async () => {
       const myGeneration = ++generation;
@@ -403,20 +407,21 @@ export function useProjectsState({
         const response = await api.liveSessions();
         if (!response.ok) return;
         const body = await response.json();
-        const liveSessions: Array<{ id: string; tmuxName?: string | null; tmuxId?: string | null; model?: string | null; claim?: string | null }> =
+        const liveSessions: Array<{ id: string; tmuxName?: string | null; tmuxId?: string | null; model?: string | null; claim?: string | null; kind?: string | null }> =
           body?.data?.liveSessions ?? body?.liveSessions ?? [];
         if (cancelled || myGeneration <= applied) {
           return; // a newer response already landed
         }
         applied = myGeneration;
 
-        const rows = new Map<string, { tmuxName: string | null; tmuxId: string | null; model: string | null; lineage: boolean }>();
+        const rows = new Map<string, { tmuxName: string | null; tmuxId: string | null; model: string | null; lineage: boolean; kind: string | null }>();
         for (const session of liveSessions) {
           rows.set(session.id, {
             tmuxName: session.tmuxName ?? null,
             tmuxId: session.tmuxId ?? null,
             model: session.model ?? null,
             lineage: session.claim === 'lineage',
+            kind: session.kind ?? null,
           });
         }
         // Removal debounce: keep a previously seen row for one missing snapshot.
@@ -436,6 +441,7 @@ export function useProjectsState({
         const tmuxIds = new Map<string, string>();
         const models = new Map<string, string>();
         const lineage = new Set<string>();
+        const kinds = new Map<string, string>();
         for (const [id, row] of rows) {
           if (row.tmuxName) {
             names.set(id, row.tmuxName);
@@ -449,12 +455,16 @@ export function useProjectsState({
           if (row.lineage) {
             lineage.add(id);
           }
+          if (row.kind) {
+            kinds.set(id, row.kind);
+          }
         }
         setLiveSessionIds(new Set(rows.keys()));
         setLiveSessionNames(names);
         setLiveSessionTmuxIds(tmuxIds);
         setLiveSessionModels(models);
         setLiveSessionLineage(lineage);
+        setLiveSessionKinds(kinds);
       } catch {
         // ignore — live detection is best-effort; last snapshot stays (fail-closed
         // for read-only protection).
@@ -1134,6 +1144,7 @@ export function useProjectsState({
       liveSessionNames,
       liveSessionLineage,
       liveSessionTmuxIds,
+      liveSessionKinds,
       onProjectSelect: handleProjectSelect,
       onSessionSelect: handleSessionSelect,
       onNewSession: handleNewSession,
@@ -1155,6 +1166,7 @@ export function useProjectsState({
       liveSessionNames,
       liveSessionLineage,
       liveSessionTmuxIds,
+      liveSessionKinds,
       handleNewSession,
       handleProjectDelete,
       handleProjectSelect,

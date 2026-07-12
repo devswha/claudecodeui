@@ -50,6 +50,9 @@ export type SidebarProps = {
   // `$N` tmux generation token per id — passed with kill so a same-named
   // replacement session is refused server-side.
   liveSessionTmuxIds: ReadonlyMap<string, string>;
+  // Foreground-command classification per live id ('interactive' | 'batch').
+  // Presentational badge only — never gates tmux actions.
+  liveSessionKinds: ReadonlyMap<string, string>;
   onProjectSelect: (project: Project) => void;
   onSessionSelect: (session: ProjectSession) => void;
   onNewSession: (project: Project) => void;

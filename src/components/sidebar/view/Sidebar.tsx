@@ -31,6 +31,7 @@ function Sidebar({
   liveSessionNames,
   liveSessionLineage,
   liveSessionTmuxIds,
+  liveSessionKinds,
   onProjectSelect,
   onSessionSelect,
   onNewSession,
@@ -315,6 +316,7 @@ function Sidebar({
             liveSessionNames={liveSessionNames}
             liveSessionLineage={liveSessionLineage}
             liveSessionTmuxIds={liveSessionTmuxIds}
+            liveSessionKinds={liveSessionKinds}
             onExternalTerminalOpen={onExternalTerminalOpen}
             t={t}
           />
