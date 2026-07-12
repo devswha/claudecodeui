@@ -29,6 +29,12 @@ export default function LiveRelayComposer({ tmuxName, tmuxId = null, model = nul
     if (!message || status.kind === 'sending') {
       return;
     }
+    // Server contract: the $N generation token is required (fail-closed). No
+    // token means we cannot prove which same-named session receives the text.
+    if (!tmuxId) {
+      setStatus({ kind: 'error', text: '세션 세대 정보 미확인 — 목록 갱신 후 다시 시도' });
+      return;
+    }
     setStatus({ kind: 'sending' });
     try {
       const response = await api.liveSessionSend(tmuxName, message, tmuxId);

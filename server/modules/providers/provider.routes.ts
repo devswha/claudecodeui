@@ -628,7 +628,7 @@ router.get(
  */
 const TMUX_ID_RE = /^\$\d+$/;
 
-async function assertLineageTmuxTarget(tmuxName: string, tmuxId: string | null): Promise<void> {
+async function assertLineageTmuxTarget(tmuxName: string, tmuxId: string): Promise<void> {
   const live = await getLiveGjcSessions();
   const matches = live.filter((session) => session.tmuxName === tmuxName && session.claim === 'lineage');
   if (matches.length === 0) {
@@ -637,7 +637,7 @@ async function assertLineageTmuxTarget(tmuxName: string, tmuxId: string | null):
       statusCode: 403,
     });
   }
-  if (tmuxId !== null && !matches.some((session) => session.tmuxId === tmuxId)) {
+  if (!matches.some((session) => session.tmuxId === tmuxId)) {
     throw new AppError('tmux 세션이 그 사이 교체되었습니다 — 같은 이름의 다른 세션입니다. 목록을 새로고침한 뒤 다시 시도하세요.', {
       code: 'TMUX_GENERATION_MISMATCH',
       statusCode: 409,
@@ -645,15 +645,17 @@ async function assertLineageTmuxTarget(tmuxName: string, tmuxId: string | null):
   }
 }
 
-/** Optional `$N` generation token from the request body; malformed values are rejected. */
-function readTmuxIdParam(value: unknown): string | null {
-  if (value === undefined || value === null || value === '') {
-    return null;
-  }
+/**
+ * REQUIRED `$N` generation token from the request body. A missing token is a
+ * 400, not a skipped check — otherwise any authenticated caller could omit it
+ * and bypass the same-name replacement guard entirely (리뷰 HIGH: fail-closed
+ * means the generation comparison must be unavoidable).
+ */
+function readTmuxIdParam(value: unknown): string {
   if (typeof value === 'string' && TMUX_ID_RE.test(value)) {
     return value;
   }
-  throw new AppError('tmuxId must look like "$<number>".', { code: 'INVALID_TMUX_ID', statusCode: 400 });
+  throw new AppError('tmuxId is required and must look like "$<number>".', { code: 'INVALID_TMUX_ID', statusCode: 400 });
 }
 
 router.post(

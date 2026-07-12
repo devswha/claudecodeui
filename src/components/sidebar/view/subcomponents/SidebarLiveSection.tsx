@@ -132,9 +132,16 @@ export default function SidebarLiveSection({
   };
 
   const kill = async (sessionId: string, tmuxName: string) => {
+    // The server requires the $N generation token (fail-closed). Without one
+    // we cannot prove WHICH same-named session would die — refuse locally.
+    const tmuxId = liveSessionTmuxIds.get(sessionId) ?? null;
+    if (!tmuxId) {
+      setStatusOf(sessionId, { kind: 'error', text: '세션 세대 정보 미확인 — 목록 갱신 후 다시 시도' });
+      return;
+    }
     setStatusOf(sessionId, { kind: 'killing' });
     try {
-      const response = await api.liveSessionKill(tmuxName, liveSessionTmuxIds.get(sessionId) ?? null);
+      const response = await api.liveSessionKill(tmuxName, tmuxId);
       const body = await response.json().catch(() => null);
       const data = (body?.data ?? body ?? {}) as {
         ok?: boolean;
