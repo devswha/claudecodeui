@@ -9,6 +9,10 @@ type SpawnStatus =
   | { kind: 'spawning' }
   | { kind: 'ok'; text: string }
   | { kind: 'error'; text: string };
+// Mirrors the tower's NAME_RE — validating here turns the tower's English 400
+// ("invalid session name") into an actionable Korean message before any request.
+const SPAWN_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+const NAME_RULE_TEXT = '이름은 영문·숫자로 시작, 영문·숫자·. _ - 만 (공백·/ 불가)';
 
 // A new gjc session is created through the control tower's /spawn (proxied by the
 // server). The tower validates the name + cwd and boots the tmux session; the live
@@ -32,6 +36,10 @@ export default function SidebarSpawnSession() {
     if (!trimmedName || !trimmedCwd || status.kind === 'spawning') {
       return;
     }
+    if (!SPAWN_NAME_RE.test(trimmedName)) {
+      setStatus({ kind: 'error', text: NAME_RULE_TEXT });
+      return;
+    }
     setStatus({ kind: 'spawning' });
     try {
       const response = await api.liveSessionSpawn(trimmedName, trimmedCwd);
@@ -49,13 +57,14 @@ export default function SidebarSpawnSession() {
         reset();
         return;
       }
+      const rawError = (typeof body?.error === 'string' && body.error) || data.detail || '';
       const text = data.reachable === false
         ? '관제탑 미가동 — 생성 불가'
         : data.conflict
           ? '같은 이름의 세션이 이미 있습니다'
-          : (typeof body?.error === 'string' && body.error)
-            || data.detail
-            || '세션 생성 실패';
+          : rawError.includes('invalid session name')
+            ? NAME_RULE_TEXT
+            : rawError || '세션 생성 실패';
       setStatus({ kind: 'error', text });
     } catch {
       setStatus({ kind: 'error', text: '세션 생성 실패' });

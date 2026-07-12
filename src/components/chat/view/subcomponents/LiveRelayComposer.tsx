@@ -1,6 +1,7 @@
 import { useState } from 'react';
 
 import { api } from '../../../../utils/api';
+import { requestLivePollBoost } from '../../../../utils/livePollBoost';
 
 type RelayStatus =
   | { kind: 'idle' }
@@ -45,6 +46,9 @@ export default function LiveRelayComposer({ tmuxName, tmuxId = null, model = nul
       }
       setInput('');
       setStatus(data.queued ? { kind: 'queued', text: '대기열 적재됨' } : { kind: 'ok', text: '전달됨' });
+      // The user is now watching for the pane's reaction (idle→live transition,
+      // new transcript activity) — poll fast for a short window.
+      requestLivePollBoost();
     } catch {
       setStatus({ kind: 'error', text: '전송 실패' });
     }
