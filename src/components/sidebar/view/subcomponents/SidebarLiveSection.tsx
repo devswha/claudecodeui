@@ -263,28 +263,23 @@ export default function SidebarLiveSection({
           const idleTarget = isIdle
             ? buildIdleTarget(id, liveSessionNames, liveSessionLineage, liveSessionTmuxIds)
             : null;
+          // Row = badge + name only. Explanations live in the tooltip — a
+          // per-row subtitle repeated N times is scaffolding noise, not data.
           const rowContent = (
-            <>
-              <span className="flex items-center gap-2">
-                <span
-                  className={`inline-flex h-1.5 w-1.5 shrink-0 rounded-full ${isIdle ? 'bg-muted-foreground/50' : 'animate-pulse bg-blue-500'}`}
-                  aria-hidden
-                />
-                <span
-                  className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold ${isIdle ? 'bg-muted text-muted-foreground' : 'bg-blue-500/15 text-blue-600 dark:text-blue-400'}`}
-                >
-                  {isIdle ? '대기' : 'LIVE'}
-                </span>
-                <span className="truncate text-sm font-medium text-foreground">
-                  {tmuxName ?? '이름 미확인 세션'}
-                </span>
+            <span className="flex items-center gap-2">
+              <span
+                className={`inline-flex h-1.5 w-1.5 shrink-0 rounded-full ${isIdle ? 'bg-muted-foreground/50' : 'animate-pulse bg-blue-500'}`}
+                aria-hidden
+              />
+              <span
+                className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold ${isIdle ? 'bg-muted text-muted-foreground' : 'bg-blue-500/15 text-blue-600 dark:text-blue-400'}`}
+              >
+                {isIdle ? '대기' : 'LIVE'}
               </span>
-              <span className="truncate pl-[1.375rem] text-[11px] text-muted-foreground">
-                {isIdle
-                  ? '프롬프트 대기 중 — 클릭하면 메인 영역에서 첫 메시지를 보냅니다'
-                  : '대화 미로딩 — 해당 프로젝트를 열면 제목이 표시됩니다'}
+              <span className="truncate text-sm font-medium text-foreground">
+                {tmuxName ?? '이름 미확인'}
               </span>
-            </>
+            </span>
           );
           return (
             <div key={id} className="rounded-md transition-colors hover:bg-muted/50">
@@ -293,13 +288,17 @@ export default function SidebarLiveSection({
                   <button
                     type="button"
                     aria-label={`${idleTarget.tmuxName} 대기 세션 열기`}
+                    title="클릭하면 메인 영역에서 첫 메시지를 보낼 수 있습니다"
                     onClick={() => onIdleSessionOpen(idleTarget)}
-                    className="flex min-w-0 flex-1 flex-col gap-0.5 px-2 py-1.5 text-left"
+                    className="flex min-w-0 flex-1 flex-col px-2 py-1.5 text-left"
                   >
                     {rowContent}
                   </button>
                 ) : (
-                  <div className="flex min-w-0 flex-1 flex-col gap-0.5 px-2 py-1.5 text-left">
+                  <div
+                    title={isIdle ? undefined : '해당 프로젝트를 열면 제목이 표시됩니다'}
+                    className="flex min-w-0 flex-1 flex-col px-2 py-1.5 text-left"
+                  >
                     {rowContent}
                   </div>
                 )}
@@ -310,9 +309,6 @@ export default function SidebarLiveSection({
           );
         })}
       </div>
-      <p className="px-2 pt-2 text-[10px] leading-relaxed text-muted-foreground/70">
-        tmux 안에서 도는 gjc 세션만 감지됩니다 — claude 등 다른 CLI 세션은 표시되지 않습니다.
-      </p>
     </div>
   );
 }

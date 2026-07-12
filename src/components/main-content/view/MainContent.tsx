@@ -260,7 +260,7 @@ function MainContent({
           <div className="max-w-md space-y-3 text-center">
             <SquareTerminal className="mx-auto h-8 w-8 text-muted-foreground" aria-hidden />
             <h2 className="text-base font-semibold text-foreground">아직 대화가 없습니다</h2>
-            <p className="text-sm text-muted-foreground">아래에서 첫 메시지를 보내면 이 tmux 세션의 대화가 시작됩니다.</p>
+            <p className="text-sm text-muted-foreground">첫 메시지를 보내면 대화가 시작됩니다.</p>
             {resolvingTimedOut && (
               <p role="status" className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
                 대화를 불러오는 중… 오래 걸리면 사이드바에서 직접 열 수 있습니다
