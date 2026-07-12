@@ -6,11 +6,13 @@ import type { ExternalCliSession } from '../../hooks/useExternalCliSessions';
 const KIND_LABEL: Record<ExternalCliSession['kind'], string> = {
   claude: 'Claude Code',
   codex: 'Codex CLI',
+  ssh: 'ssh (원격)',
 };
 
 const KIND_DOT: Record<ExternalCliSession['kind'], string> = {
   claude: 'bg-orange-500',
   codex: 'bg-emerald-500',
+  ssh: 'bg-slate-400',
 };
 
 type SidebarExternalSectionProps = {
@@ -33,7 +35,7 @@ export default function SidebarExternalSection({ sessions, projects, onOpen }: S
   if (sessions.length === 0 || !shellProject) {
     return (
       <div className="px-4 py-8 text-center text-sm text-muted-foreground">
-        지금 tmux에서 작동 중인 claude/codex 세션이 없습니다.
+        지금 tmux에서 작동 중인 claude/codex/ssh 세션이 없습니다.
       </div>
     );
   }

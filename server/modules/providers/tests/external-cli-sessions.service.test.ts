@@ -63,12 +63,36 @@ test('classifyExternalSessions: gjc anywhere in the session excludes it (live la
   assert.deepEqual(result, [{ tmuxName: 'stock', kind: 'claude' }]);
 });
 
-test('classifyExternalSessions: unclassified panes (ssh/zsh) are dropped', () => {
+test('classifyExternalSessions: ssh tunnels surface as attach-only ssh rows (실측: company)', () => {
+  // The far-side CLI is locally unprovable — the pane still deserves an
+  // attach-only row instead of vanishing (하코 관찰: company 세션 안 보임).
   const result = classifyExternalSessions({
     panes: [{ name: 'company', pid: 3318360, command: 'ssh' }],
     procs: [{ pid: 3318360, ppid: 1, comm: 'ssh' }],
   });
+  assert.deepEqual(result, [{ tmuxName: 'company', kind: 'ssh' }]);
+});
+
+test('classifyExternalSessions: plain shell panes (zsh) are still dropped', () => {
+  const result = classifyExternalSessions({
+    panes: [{ name: 'scratch', pid: 400, command: 'zsh' }],
+    procs: [{ pid: 400, ppid: 1, comm: 'zsh' }],
+  });
   assert.deepEqual(result, []);
+});
+
+test('classifyExternalSessions: local claude wins over an ssh pane in the same session', () => {
+  const result = classifyExternalSessions({
+    panes: [
+      { name: 'mixed', pid: 500, command: 'claude' },
+      { name: 'mixed', pid: 600, command: 'ssh' },
+    ],
+    procs: [
+      { pid: 500, ppid: 1, comm: 'claude' },
+      { pid: 600, ppid: 1, comm: 'ssh' },
+    ],
+  });
+  assert.deepEqual(result, [{ tmuxName: 'mixed', kind: 'claude' }]);
 });
 
 test('classifyExternalSessions: multi-pane session unions comms and yields ONE row', () => {

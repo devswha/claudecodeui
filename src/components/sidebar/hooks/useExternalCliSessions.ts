@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 
 import { api } from '../../../utils/api';
 
-export type ExternalCliSession = { tmuxName: string; kind: 'claude' | 'codex' };
+export type ExternalCliSession = { tmuxName: string; kind: 'claude' | 'codex' | 'ssh' };
 
 const POLL_INTERVAL_MS = 10000;
 
@@ -29,7 +29,7 @@ export function useExternalCliSessions(): ExternalCliSession[] {
         const list: ExternalCliSession[] = body?.data?.externalSessions ?? body?.externalSessions ?? [];
         if (!cancelled && myGeneration > applied) {
           applied = myGeneration;
-          setSessions(list.filter((session) => session?.tmuxName && (session.kind === 'claude' || session.kind === 'codex')));
+          setSessions(list.filter((session) => session?.tmuxName && (session.kind === 'claude' || session.kind === 'codex' || session.kind === 'ssh')));
         }
       } catch {
         // best-effort — no tmux / endpoint error just empties the tab

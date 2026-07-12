@@ -19,7 +19,7 @@ import { spawn } from 'node:child_process';
 
 const TMUX_FIELD_SEP = '\t';
 
-export type ExternalCliKind = 'claude' | 'codex';
+export type ExternalCliKind = 'claude' | 'codex' | 'ssh';
 export type ExternalCliSession = { tmuxName: string; kind: ExternalCliKind };
 
 /** Matches the tower/live-send tmux-name discipline; also safe to embed in a shell command. */
@@ -70,10 +70,11 @@ export function parsePsTree(output: string): Array<{ pid: number; ppid: number; 
  * Per pane, the comm set is {pane_current_command} ∪ {comm of every /proc
  * descendant of pane_pid} (depth/cycle guarded). Per tmux session (union of its
  * panes): 'gjc' anywhere → excluded (that session is the gjc live lane's —
- * never touched here); else 'claude' wins over 'codex' only in the sense that
- * whichever is present names the kind, with 'claude' checked first. Sessions
- * with neither are dropped. Names failing EXTERNAL_TMUX_NAME_RE are dropped
- * (they could not be attached safely). Output is sorted by name for stability.
+ * never touched here); else the kind is the first match of claude → codex →
+ * ssh ('ssh' = a remote tunnel whose far-side CLI is locally unprovable —
+ * attach-only). Sessions with none of the three are dropped (plain shells).
+ * Names failing EXTERNAL_TMUX_NAME_RE are dropped (they could not be attached
+ * safely). Output is sorted by name for stability.
  */
 export function classifyExternalSessions(args: {
   panes: Array<{ name: string; pid: number; command: string }>;
@@ -142,6 +143,12 @@ export function classifyExternalSessions(args: {
       result.push({ tmuxName: name, kind: 'claude' });
     } else if (comms.has('codex')) {
       result.push({ tmuxName: name, kind: 'codex' });
+    } else if (comms.has('ssh')) {
+      // Remote lane: the pane tunnels into another machine, so the CLI running
+      // there is invisible to local ps by definition (실측: company → ssh →
+      // 원격 claude). Attach-only is still safe and useful — surface it as
+      // 'ssh' instead of silently hiding the session (하코 요청).
+      result.push({ tmuxName: name, kind: 'ssh' });
     }
   }
   return result.sort((a, b) => a.tmuxName.localeCompare(b.tmuxName));
