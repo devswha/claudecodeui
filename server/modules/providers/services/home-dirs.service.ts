@@ -129,26 +129,42 @@ export function parseExtraSpawnRoots(raw: string | undefined): string[] {
 
 /**
  * Spawn-scope suggestions: extra spawn roots (the tower's TOWER_ALLOWED_ROOTS,
- * e.g. the /Volumes workspace) come FIRST, then $HOME — the workspace is where
- * new sessions usually live. Suggestions stay bare relative names on purpose:
- * the tower's resolveSpawnCwd resolves them $HOME-first then per allowed root,
- * so the picked string is exactly what /spawn accepts. On a rare name collision
- * (same child under $HOME and a root) the tower's $HOME-first rule wins.
+ * e.g. the /Volumes workspace) come FIRST, then $HOME. Extra-root entries are
+ * returned as ABSOLUTE paths (the tower's resolveSpawnCwd takes absolute paths
+ * as-is), home entries stay home-relative — so a picked suggestion is never
+ * ambiguous when the same child name exists under both $HOME and a root
+ * (리뷰 반영: bare-name collisions used to display workspace-first but spawn
+ * $HOME-first). Absolute prefixes are accepted here (continuing to type after
+ * picking a workspace entry) and are contained to the extra roots.
  */
 export async function getSpawnDirSuggestions(
   prefix: string,
   homeDir: string = os.homedir(),
   extraRoots: string[] = parseExtraSpawnRoots(process.env.TOWER_ALLOWED_ROOTS),
 ): Promise<string[]> {
-  if (prefix.includes('\0') || prefix.startsWith('/') || prefix.length > 512) {
+  if (prefix.includes('\0') || prefix.length > 512) {
     return [];
   }
   const lanes: string[][] = [];
-  for (const root of extraRoots) {
-    const rootReal = await safeRealpath(root);
-    lanes.push(rootReal ? await suggestUnderBase(prefix, rootReal, [rootReal]) : []);
+  if (prefix.startsWith('/')) {
+    // Absolute prefix: only extra roots may serve it, and only from inside.
+    for (const root of extraRoots) {
+      const rootReal = await safeRealpath(root);
+      if (!rootReal || (prefix !== rootReal && !prefix.startsWith(`${rootReal}${path.sep}`))) {
+        continue;
+      }
+      const rel = prefix === rootReal ? '' : prefix.slice(rootReal.length + 1);
+      const entries = await suggestUnderBase(rel, rootReal, [rootReal]);
+      lanes.push(entries.map((entry) => `${rootReal}${path.sep}${entry}`));
+    }
+  } else {
+    for (const root of extraRoots) {
+      const rootReal = await safeRealpath(root);
+      const entries = rootReal ? await suggestUnderBase(prefix, rootReal, [rootReal]) : [];
+      lanes.push(entries.map((entry) => `${rootReal}${path.sep}${entry}`));
+    }
+    lanes.push(await suggestUnderBase(prefix, homeDir, await resolveAllowedRoots(homeDir)));
   }
-  lanes.push(await suggestUnderBase(prefix, homeDir, await resolveAllowedRoots(homeDir)));
   const seen = new Set<string>();
   const merged: string[] = [];
   for (const lane of lanes) {

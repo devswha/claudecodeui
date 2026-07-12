@@ -34,6 +34,9 @@ export default function HomeDirInput({ value, onChange, onSubmit, placeholder, c
     // "pick a project" default list (workspace roots first). The home scope
     // keeps its old behavior — no dropdown until something is typed.
     if (!value.trim() && scope !== 'spawn') {
+      // Invalidate any in-flight request too — a slow response must not
+      // repopulate suggestions after the input was cleared (리뷰 반영).
+      requestSeqRef.current += 1;
       setSuggestions([]);
       return undefined;
     }
@@ -41,7 +44,13 @@ export default function HomeDirInput({ value, onChange, onSubmit, placeholder, c
     debounceRef.current = setTimeout(async () => {
       try {
         const response = await api.dirSuggestions(value.trim(), scope === 'spawn' ? 'spawn' : null);
-        if (!response.ok) return;
+        if (seq !== requestSeqRef.current) {
+          return;
+        }
+        if (!response.ok) {
+          setSuggestions([]);
+          return;
+        }
         const body = await response.json();
         const list: string[] = body?.data?.suggestions ?? [];
         if (seq === requestSeqRef.current) {
@@ -49,7 +58,10 @@ export default function HomeDirInput({ value, onChange, onSubmit, placeholder, c
           setSuggestions(list.filter((entry) => entry !== value.trim()));
         }
       } catch {
-        // best-effort
+        // Best-effort, but never leave stale entries behind a failed fetch.
+        if (seq === requestSeqRef.current) {
+          setSuggestions([]);
+        }
       }
     }, DEBOUNCE_MS);
     return () => {
