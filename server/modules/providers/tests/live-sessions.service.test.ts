@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   buildPidChain,
   computeLiveSessions,
+  expandProcessDescendants,
   extractSessionPathsFromLsof,
   findIdleGjcTmuxSessions,
   IDLE_GJC_ID_PREFIX,
@@ -11,6 +12,7 @@ import {
   parseLastModelChange,
   parseLsofPidSessions,
   parsePidParents,
+  parsePsProcessRecords,
   parseTmuxPanes,
   tmuxHasPanes,
 } from '@/modules/providers/services/live-sessions.service.js';
@@ -48,6 +50,31 @@ test('parsePidParents parses headerless `ps -eo pid=,ppid=` output (BSD right-al
   // macOS(BSD) ps pads columns with leading spaces; Linux(procps) output parses identically.
   const parents = parsePidParents('    1     0\n89726 89725\n93770 93769\n\nnot a row\n');
   assert.deepEqual([...parents], [[1, 0], [89726, 89725], [93770, 93769]]);
+});
+test('parsePsProcessRecords preserves args with spaces from one ps snapshot', () => {
+  const records = parsePsProcessRecords([
+    '  100     1 bun /Volumes/Data/Dev Workspace/tools/gjc.js --flag',
+    '  101   100 node /opt/worker.js',
+    'malformed row',
+  ].join('\n'));
+
+  assert.deepEqual(records, [
+    { pid: 100, ppid: 1, args: 'bun /Volumes/Data/Dev Workspace/tools/gjc.js --flag' },
+    { pid: 101, ppid: 100, args: 'node /opt/worker.js' },
+  ]);
+});
+
+test('expandProcessDescendants includes every child level and stops at ppid cycles', () => {
+  const descendants = expandProcessDescendants(new Set([10, 20]), [
+    { pid: 10, ppid: 1 },
+    { pid: 11, ppid: 10 },
+    { pid: 12, ppid: 11 },
+    { pid: 13, ppid: 10 },
+    { pid: 20, ppid: 21 },
+    { pid: 21, ppid: 20 },
+  ]);
+
+  assert.deepEqual([...descendants], [10, 20, 11, 13, 21, 12]);
 });
 
 test('buildPidChain walks [pid, ppid, …] toward init from a ps snapshot', () => {

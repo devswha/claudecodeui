@@ -77,31 +77,51 @@ export function parsePsTree(output: string): Array<{ pid: number; ppid: number; 
 /**
  * Pids whose COMMAND LINE identifies gjc, from `ps -eo pid=,args=` output.
  * comm alone cannot see script installs — macOS 실측: gjc runs as
- * `bun /…/.bun/bin/gjc`, so comm is `bun`. Argv is the portable evidence:
- * a pid counts when argv[0]'s basename is 'gjc', or any PATH-looking token
- * ('/' 포함) has basename 'gjc'/'gjc.js' (covers `bun /…/gjc`,
- * `node /…/gjc.js`, wrapper scripts). Bare non-argv0 'gjc' words
- * (e.g. `grep gjc`) are deliberately NOT evidence.
+ * `bun /…/.bun/bin/gjc`, so comm is `bun`. A pid counts only when argv[0]'s
+ * basename is `gjc`, or argv[0] is bun/node and its first argument's basename
+ * is `gjc`/`gjc.js`. Later command-line tokens are never evidence.
  */
+function hasGjcArgvEvidence(commandLine: string): boolean {
+  const firstSpace = commandLine.search(/\s/);
+  const argv0 = firstSpace < 0 ? commandLine : commandLine.slice(0, firstSpace);
+  const basename = (value: string) => value.slice(value.lastIndexOf('/') + 1);
+
+  if (basename(argv0) === 'gjc' || /^\/.*\/gjc(?=\s|$)/.test(commandLine)) {
+    return true;
+  }
+
+  let runtime = basename(argv0);
+  let firstArgument = firstSpace < 0 ? '' : commandLine.slice(firstSpace).trimStart();
+  if (runtime !== 'bun' && runtime !== 'node') {
+    // `ps args` flattens paths with spaces. Keep the runtime at argv[0] by
+    // accepting only a command line that starts with its absolute path.
+    const spacedRuntime = /^(\/.*\/(bun|node))\s+(.+)$/.exec(commandLine);
+    if (!spacedRuntime) {
+      return false;
+    }
+    runtime = spacedRuntime[2];
+    firstArgument = spacedRuntime[3];
+  }
+
+  if ((runtime !== 'bun' && runtime !== 'node') || firstArgument.startsWith('-')) {
+    return false;
+  }
+
+  const firstToken = firstArgument.split(/\s+/, 1)[0];
+  if (basename(firstToken) === 'gjc' || basename(firstToken) === 'gjc.js') {
+    return true;
+  }
+
+  // macOS `ps args` removes argv boundaries from space-containing path names.
+  // This remains anchored immediately after the bun/node executable.
+  return firstArgument.startsWith('/') && /^\/.*\/gjc(?:\.js)?(?=\s|$)/.test(firstArgument);
+}
+
 export function parseGjcPidsFromPsArgs(output: string): Set<number> {
   const pids = new Set<number>();
   for (const raw of output.split(/\r?\n/)) {
     const match = /^\s*(\d+)\s+(.+)$/.exec(raw);
-    if (!match) {
-      continue;
-    }
-    const tokens = match[2].trim().split(/\s+/);
-    const isGjc = tokens.some((rawToken, index) => {
-      // Shell wrapper argv flattens `sh -c "…; /path/gjc; rc=$?"` into tokens
-      // like `/path/gjc;` — strip trailing shell punctuation before matching.
-      const token = rawToken.replace(/[;,)&|]+$/, '');
-      const base = token.slice(token.lastIndexOf('/') + 1);
-      if (index === 0) {
-        return base === 'gjc';
-      }
-      return token.includes('/') && (base === 'gjc' || base === 'gjc.js');
-    });
-    if (isGjc) {
+    if (match && hasGjcArgvEvidence(match[2].trim())) {
       pids.add(Number.parseInt(match[1], 10));
     }
   }

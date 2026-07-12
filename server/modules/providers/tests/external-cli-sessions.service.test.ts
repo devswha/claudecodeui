@@ -167,16 +167,21 @@ test('classifyExternalSessions: sorted by tmux name for stable rendering', () =>
   assert.deepEqual(result.map((s) => s.tmuxName), ['alpha', 'zeta']);
 });
 
-test('parseGjcPidsFromPsArgs: argv 증거로 gjc pid 식별 (macOS 실측 shapes)', () => {
+test('parseGjcPidsFromPsArgs accepts only argv0 and the bun/node first argument', () => {
   const pids = parseGjcPidsFromPsArgs([
-    '89726 bun /Users/dev/.bun/bin/gjc',                       // macOS script install
-    '  100 gjc --no-session',                                  // Linux native binary (argv0)
-    '  200 node /opt/gjc/bin/gjc.js notify daemon-internal',   // node runtime
-    '  300 grep gjc server.log',                               // bare word — NOT evidence
-    '  400 vim gjc-notes.md',                                  // 유사 이름 — NOT evidence
-    '  500 zsh -c export PATH=…; /Users/dev/.bun/bin/gjc; rc=$?', // launcher wrapper
+    '  100 gjc --no-session',
+    '  101 /Users/x/.bun/bin/gjc --flag',
+    '  102 bun /Users/x/.bun/install/global/node_modules/@gajae-code/coding-agent/bin/gjc.js',
+    '  103 node /opt/gjc.js',
+    '  104 bun /Volumes/Data/Dev Workspace/tools/gjc.js',
+    '  105 bun /Users/dev/.bun/bin/gjc',
+    '  200 vim /tmp/gjc',
+    '  201 cat /opt/gjc.js',
+    '  202 bash -c "echo /usr/bin/gjc"',
+    '  203 node build/gjc-tools.js',
   ].join('\n'));
-  assert.deepEqual([...pids].sort((a, b) => a - b), [89726, 100, 200, 500].sort((a, b) => a - b));
+
+  assert.deepEqual([...pids].sort((a, b) => a - b), [100, 101, 102, 103, 104, 105]);
 });
 
 test('classifyExternalSessions: bun으로 도는 gjc도 gjcPids로 제외 (macOS live lane contract)', () => {
