@@ -69,7 +69,7 @@ test('parseExtraSpawnRoots keeps only absolute csv entries', () => {
   assert.deepEqual(parseExtraSpawnRoots(' /Volumes/Data/Dev Workspace , relative/path , '), ['/Volumes/Data/Dev Workspace']);
 });
 
-test('getSpawnDirSuggestions: extra roots absolute-first, home relative after; collisions stay distinguishable', async () => {
+test('getSpawnDirSuggestions: workspace entries stay short; only home-shadowed names go absolute', async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), 'spawn-home-'));
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'spawn root-'))); // space: 실제 워크스페이스 경로 형태
   try {
@@ -79,16 +79,20 @@ test('getSpawnDirSuggestions: extra roots absolute-first, home relative after; c
     await mkdir(path.join(root, 'shared'));
     await mkdir(path.join(root, 'aegis-alpha', 'sub'));
 
-    // Empty prefix = default list: workspace children (absolute) first, then
-    // home's (relative). The 'shared' collision yields two DISTINCT strings —
-    // the picked suggestion always spawns exactly where it says.
+    // Empty prefix = default list: workspace children first (short bare names
+    // — the tower resolves them to the root since home has no such child),
+    // then home's. Only the 'shared' collision pays the absolute form: its
+    // bare string would silently spawn in $HOME instead of the listed root.
     assert.deepEqual(
       await getSpawnDirSuggestions('', home, [root]),
-      [path.join(root, 'aegis-alpha'), path.join(root, 'shared'), 'shared', 'zeta'],
+      ['aegis-alpha', path.join(root, 'shared'), 'shared', 'zeta'],
     );
     // Fragment matching hits the workspace root even when home has no match.
-    assert.deepEqual(await getSpawnDirSuggestions('aeg', home, [root]), [path.join(root, 'aegis-alpha')]);
-    // Absolute prefix (continuing after a pick) lists inside the root only.
+    assert.deepEqual(await getSpawnDirSuggestions('aeg', home, [root]), ['aegis-alpha']);
+    // Nested listing under an unshadowed workspace child stays short too.
+    assert.deepEqual(await getSpawnDirSuggestions('aegis-alpha/', home, [root]), ['aegis-alpha/sub']);
+    // Absolute prefix (continuing after picking a shadowed entry) lists
+    // inside the root only.
     assert.deepEqual(
       await getSpawnDirSuggestions(`${path.join(root, 'aegis-alpha')}/`, home, [root]),
       [path.join(root, 'aegis-alpha', 'sub')],

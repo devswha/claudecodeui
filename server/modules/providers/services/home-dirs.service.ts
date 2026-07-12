@@ -129,13 +129,16 @@ export function parseExtraSpawnRoots(raw: string | undefined): string[] {
 
 /**
  * Spawn-scope suggestions: extra spawn roots (the tower's TOWER_ALLOWED_ROOTS,
- * e.g. the /Volumes workspace) come FIRST, then $HOME. Extra-root entries are
- * returned as ABSOLUTE paths (the tower's resolveSpawnCwd takes absolute paths
- * as-is), home entries stay home-relative — so a picked suggestion is never
- * ambiguous when the same child name exists under both $HOME and a root
- * (리뷰 반영: bare-name collisions used to display workspace-first but spawn
- * $HOME-first). Absolute prefixes are accepted here (continuing to type after
- * picking a workspace entry) and are contained to the extra roots.
+ * e.g. the /Volumes workspace) come FIRST, then $HOME.
+ *
+ * Extra-root entries stay SHORT (bare relative names — the tower's
+ * resolveSpawnCwd resolves $HOME first, then each root, so an unshadowed name
+ * lands in the root exactly as displayed). Only when the same relative path
+ * ALSO exists under $HOME does the entry switch to its ABSOLUTE form — the
+ * bare string would silently spawn in $HOME instead of where the list showed
+ * it (리뷰 반영), and full paths for everything drowned the dropdown in the
+ * root prefix (실사용 피드백). Absolute prefixes are accepted (continuing to
+ * type after picking a shadowed entry) and are contained to the extra roots.
  */
 export async function getSpawnDirSuggestions(
   prefix: string,
@@ -158,10 +161,18 @@ export async function getSpawnDirSuggestions(
       lanes.push(entries.map((entry) => `${rootReal}${path.sep}${entry}`));
     }
   } else {
+    const homeReal = await safeRealpath(homeDir);
     for (const root of extraRoots) {
       const rootReal = await safeRealpath(root);
       const entries = rootReal ? await suggestUnderBase(prefix, rootReal, [rootReal]) : [];
-      lanes.push(entries.map((entry) => `${rootReal}${path.sep}${entry}`));
+      const lane: string[] = [];
+      for (const entry of entries) {
+        // Shadow test mirrors the tower: would $HOME-first resolution hijack
+        // this bare name? Only then pay the absolute-path verbosity.
+        const shadowed = homeReal !== null && (await safeRealpath(path.join(homeReal, entry))) !== null;
+        lane.push(shadowed ? `${rootReal}${path.sep}${entry}` : entry);
+      }
+      lanes.push(lane);
     }
     lanes.push(await suggestUnderBase(prefix, homeDir, await resolveAllowedRoots(homeDir)));
   }
