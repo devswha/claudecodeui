@@ -1,6 +1,6 @@
 import type { Dispatch, SetStateAction } from 'react';
 
-import type { AppTab, ExternalTerminalTarget, Project, ProjectSession } from '../../../types/app';
+import type { AppTab, ExternalTerminalTarget, IdleGjcTarget, Project, ProjectSession } from '../../../types/app';
 import type {
   MarkSessionIdle,
   MarkSessionProcessing,
@@ -64,6 +64,10 @@ export type MainContentProps = {
   // External CLI (claude/codex) tmux terminal shown as the full main area.
   externalTerminal: ExternalTerminalTarget | null;
   onExternalTerminalClose: () => void;
+  idleTarget: IdleGjcTarget | null;
+  onIdleClose: () => void;
+  resolvingTimedOut: boolean;
+  idleAmbiguous: boolean;
 };
 
 export type MainContentHeaderProps = {

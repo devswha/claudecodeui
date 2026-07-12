@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Menu, SquareTerminal, X } from 'lucide-react';
 
 import ChatInterface from '../../chat/view/ChatInterface';
+import LiveRelayComposer from '../../chat/view/subcomponents/LiveRelayComposer';
+import { composerKey } from '../../app/idleTransition';
 import PluginTabContent from '../../plugins/view/PluginTabContent';
 import StandaloneShell from '../../standalone-shell/view/StandaloneShell';
 import { BrowserUsePanel } from '../../browser-use';
@@ -58,6 +60,10 @@ function MainContent({
   newSessionTrigger,
   externalTerminal,
   onExternalTerminalClose,
+  idleTarget,
+  onIdleClose,
+  resolvingTimedOut,
+  idleAmbiguous,
 }: MainContentProps) {
   const { preferences } = useUiPreferences();
   const { showRawParameters, showThinking, sendByCtrlEnter } = preferences;
@@ -217,6 +223,64 @@ function MainContent({
             />
           )}
         </div>
+      </div>
+    );
+  }
+  if (idleTarget) {
+    const safeName = /^[A-Za-z0-9._-]{1,64}$/.test(idleTarget.tmuxName) ? idleTarget.tmuxName : null;
+    return (
+      <div className="flex h-full flex-col">
+        <div className="flex flex-shrink-0 items-center justify-between border-b border-border/50 px-3 py-2">
+          <div className="flex min-w-0 items-center gap-2">
+            {isMobile && (
+              <button
+                type="button"
+                onClick={onMenuClick}
+                className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+                aria-label="Open sidebar"
+              >
+                <Menu className="h-4 w-4" />
+              </button>
+            )}
+            <SquareTerminal className="h-4 w-4 shrink-0 text-blue-500" aria-hidden />
+            <span className="shrink-0 rounded-full bg-blue-500/10 px-2 py-0.5 text-xs font-semibold text-blue-600 dark:text-blue-400">대기</span>
+            <span className="truncate text-sm font-semibold text-foreground">tmux:{idleTarget.tmuxName}</span>
+          </div>
+          <button
+            type="button"
+            onClick={onIdleClose}
+            title="대기 뷰 닫기"
+            aria-label="idle 대기 뷰 닫기"
+            className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto px-6 py-8">
+          <div className="max-w-md space-y-3 text-center">
+            <SquareTerminal className="mx-auto h-8 w-8 text-muted-foreground" aria-hidden />
+            <h2 className="text-base font-semibold text-foreground">아직 대화가 없습니다</h2>
+            <p className="text-sm text-muted-foreground">아래에서 첫 메시지를 보내면 이 tmux 세션의 대화가 시작됩니다.</p>
+            {resolvingTimedOut && (
+              <p role="status" className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
+                대화를 불러오는 중… 오래 걸리면 사이드바에서 직접 열 수 있습니다
+              </p>
+            )}
+            {idleAmbiguous && (
+              <p role="alert" className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
+                이 tmux 세션에 대화 후보가 여럿 감지됨 — 사이드바 목록에서 직접 선택하세요
+              </p>
+            )}
+          </div>
+        </div>
+        {safeName && (
+          <LiveRelayComposer
+            key={composerKey(idleTarget.tmuxName, idleTarget.tmuxId)}
+            tmuxName={idleTarget.tmuxName}
+            tmuxId={idleTarget.tmuxId}
+            model={null}
+          />
+        )}
       </div>
     );
   }
