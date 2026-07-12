@@ -449,27 +449,41 @@ async function readLastModelFromFile(path: string): Promise<string | null> {
  * clients poll every 5s, and overlapping tmux/lsof/ps storms were themselves
  * causing the transient misses this lane exists to avoid.
  */
-let liveScanInFlight: Promise<LiveGjcSession[]> | null = null;
+export type LiveGjcScanResult = {
+  sessions: LiveGjcSession[];
+  /** session id → open transcript path (server-internal; NOT for API responses). */
+  transcriptPaths: Map<string, string>;
+};
 
-export async function getLiveGjcSessions(): Promise<LiveGjcSession[]> {
-  if (liveScanInFlight) {
-    return liveScanInFlight;
+let liveScanInFlight: Promise<LiveGjcScanResult> | null = null;
+
+function scanShared(): Promise<LiveGjcScanResult> {
+  if (!liveScanInFlight) {
+    liveScanInFlight = scanLiveGjcSessions().finally(() => {
+      liveScanInFlight = null;
+    });
   }
-  liveScanInFlight = scanLiveGjcSessions().finally(() => {
-    liveScanInFlight = null;
-  });
   return liveScanInFlight;
 }
 
-async function scanLiveGjcSessions(): Promise<LiveGjcSession[]> {
+export async function getLiveGjcSessions(): Promise<LiveGjcSession[]> {
+  return (await scanShared()).sessions;
+}
+
+/** Detailed view for server-internal consumers (live turn monitor) — shares the single-flight scan. */
+export async function getLiveGjcSessionsDetailed(): Promise<LiveGjcScanResult> {
+  return scanShared();
+}
+
+async function scanLiveGjcSessions(): Promise<LiveGjcScanResult> {
   let tmuxOutput: string;
   try {
     tmuxOutput = await runCommand('tmux', ['list-panes', '-a', '-F', `#{session_name}${TMUX_FIELD_SEP}#{session_id}${TMUX_FIELD_SEP}#{pane_pid}${TMUX_FIELD_SEP}#{pane_current_path}`]);
   } catch {
-    return [];
+    return { sessions: [], transcriptPaths: new Map() };
   }
   if (!tmuxHasPanes(tmuxOutput)) {
-    return [];
+    return { sessions: [], transcriptPaths: new Map() };
   }
   const panes: Array<{ name: string; sid: string; pid: number; cwd: string }> = [];
   for (const pane of parseTmuxPanes(tmuxOutput)) {
@@ -521,18 +535,21 @@ async function scanLiveGjcSessions(): Promise<LiveGjcSession[]> {
       return { ...session, model: path ? await readLastModelFromFile(path) : null };
     }),
   );
-  return [
-    ...enriched,
-    ...idlePanes.map(({ name, sid }) => ({
-      id: `${IDLE_GJC_ID_PREFIX}${name}`,
-      tmuxName: name,
-      tmuxId: sid,
-      // Subtree-proven: a gjc process runs INSIDE the pane — same evidence
-      // grade as a lineage claim, so kill/relay stay permitted and safe.
-      claim: 'lineage' as const,
-      model: null,
-    })),
-  ];
+  return {
+    sessions: [
+      ...enriched,
+      ...idlePanes.map(({ name, sid }) => ({
+        id: `${IDLE_GJC_ID_PREFIX}${name}`,
+        tmuxName: name,
+        tmuxId: sid,
+        // Subtree-proven: a gjc process runs INSIDE the pane — same evidence
+        // grade as a lineage claim, so kill/relay stay permitted and safe.
+        claim: 'lineage' as const,
+        model: null,
+      })),
+    ],
+    transcriptPaths: sessionPaths,
+  };
 }
 
 /** Backward-compatible id-only view (transcript-backed ids only — no synthetic idle rows). */

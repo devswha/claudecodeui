@@ -143,6 +143,7 @@
       "title": "Event Types",
       "actionRequired": "Action required",
       "stop": "Run stopped",
+      "liveStop": "tmux live session reply ready",
       "error": "Run failed"
     }
   },

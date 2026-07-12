@@ -70,6 +70,7 @@ import browserUseMcpRoutes from './modules/browser-use/browser-use-mcp.routes.js
 import { browserUseService } from './modules/browser-use/browser-use.service.js';
 import { startEnabledPluginServers, stopAllPlugins, getPluginPort } from './utils/plugin-process-manager.js';
 import { initializeDatabase, projectsDb, sessionsDb, userDb } from './modules/database/index.js';
+import { startLiveTurnMonitor } from './modules/notifications/index.js';
 import { configureWebPush } from './services/vapid-keys.js';
 import { validateApiKey, authenticateToken, authenticateWebSocket } from './middleware/auth.js';
 import { IS_PLATFORM } from './constants/config.js';
@@ -1655,6 +1656,11 @@ async function startServer() {
 
             // Start watching the projects folder for changes
             await initializeSessionsWatcher();
+
+            // Notify on tmux-driven gjc turn completions (transcript delta →
+            // assistant stopReason). Server-side so web push works with every
+            // tab closed. Kill switch: CLOUDCLI_LIVE_NOTIFY=0.
+            startLiveTurnMonitor();
 
             // Start server-side plugin processes for enabled plugins
             startEnabledPluginServers().catch(err => {
