@@ -82,23 +82,16 @@ function isUnderAnyRoot(target: string, roots: string[]): boolean {
   return roots.some((root) => target === root || target.startsWith(`${root}${path.sep}`));
 }
 
-/**
- * Lists directory suggestions for a home-relative prefix. [] on any failure
- * (missing dir, permission, traversal or symlink escape).
- * `homeDir` is parameterized for tests; production uses $HOME.
- */
-export async function getHomeDirSuggestions(prefix: string, homeDir: string = os.homedir()): Promise<string[]> {
-  if (prefix.includes('\0') || prefix.startsWith('/') || prefix.length > 512) {
-    return [];
-  }
+/** Shared core: suggestions for `prefix` resolved under `base`, contained in `allowedRoots`. */
+async function suggestUnderBase(prefix: string, base: string, allowedRoots: string[]): Promise<string[]> {
   const { dirPart, fragment } = splitPrefix(prefix);
-  const target = path.resolve(homeDir, dirPart);
+  const target = path.resolve(base, dirPart);
   // Lexical guard first (cheap reject of ../ traversal)…
-  if (target !== homeDir && !target.startsWith(`${homeDir}${path.sep}`)) {
+  if (target !== base && !target.startsWith(`${base}${path.sep}`)) {
     return [];
   }
   // …then real-path containment so symlinks cannot escape the allowed roots.
-  const [targetReal, allowedRoots] = await Promise.all([safeRealpath(target), resolveAllowedRoots(homeDir)]);
+  const targetReal = await safeRealpath(target);
   if (!targetReal || allowedRoots.length === 0 || !isUnderAnyRoot(targetReal, allowedRoots)) {
     return [];
   }
@@ -112,4 +105,59 @@ export async function getHomeDirSuggestions(prefix: string, homeDir: string = os
   } catch {
     return [];
   }
+}
+
+/**
+ * Lists directory suggestions for a home-relative prefix. [] on any failure
+ * (missing dir, permission, traversal or symlink escape).
+ * `homeDir` is parameterized for tests; production uses $HOME.
+ */
+export async function getHomeDirSuggestions(prefix: string, homeDir: string = os.homedir()): Promise<string[]> {
+  if (prefix.includes('\0') || prefix.startsWith('/') || prefix.length > 512) {
+    return [];
+  }
+  return suggestUnderBase(prefix, homeDir, await resolveAllowedRoots(homeDir));
+}
+
+/** TOWER_ALLOWED_ROOTS csv (same contract as the tower) → absolute roots. */
+export function parseExtraSpawnRoots(raw: string | undefined): string[] {
+  return (raw ?? '')
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter((entry) => path.isAbsolute(entry));
+}
+
+/**
+ * Spawn-scope suggestions: extra spawn roots (the tower's TOWER_ALLOWED_ROOTS,
+ * e.g. the /Volumes workspace) come FIRST, then $HOME — the workspace is where
+ * new sessions usually live. Suggestions stay bare relative names on purpose:
+ * the tower's resolveSpawnCwd resolves them $HOME-first then per allowed root,
+ * so the picked string is exactly what /spawn accepts. On a rare name collision
+ * (same child under $HOME and a root) the tower's $HOME-first rule wins.
+ */
+export async function getSpawnDirSuggestions(
+  prefix: string,
+  homeDir: string = os.homedir(),
+  extraRoots: string[] = parseExtraSpawnRoots(process.env.TOWER_ALLOWED_ROOTS),
+): Promise<string[]> {
+  if (prefix.includes('\0') || prefix.startsWith('/') || prefix.length > 512) {
+    return [];
+  }
+  const lanes: string[][] = [];
+  for (const root of extraRoots) {
+    const rootReal = await safeRealpath(root);
+    lanes.push(rootReal ? await suggestUnderBase(prefix, rootReal, [rootReal]) : []);
+  }
+  lanes.push(await suggestUnderBase(prefix, homeDir, await resolveAllowedRoots(homeDir)));
+  const seen = new Set<string>();
+  const merged: string[] = [];
+  for (const lane of lanes) {
+    for (const suggestion of lane) {
+      if (!seen.has(suggestion)) {
+        seen.add(suggestion);
+        merged.push(suggestion);
+      }
+    }
+  }
+  return merged.slice(0, MAX_DIR_SUGGESTIONS);
 }

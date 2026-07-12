@@ -9,7 +9,7 @@ import { sessionConversationsSearchService } from '@/modules/providers/services/
 import { sessionsService } from '@/modules/providers/services/sessions.service.js';
 import { getLiveGjcSessions, IDLE_GJC_ID_PREFIX } from '@/modules/providers/services/live-sessions.service.js';
 import { getExternalCliSessions } from '@/modules/providers/services/external-cli-sessions.service.js';
-import { getHomeDir, getHomeDirSuggestions } from '@/modules/providers/services/home-dirs.service.js';
+import { getHomeDir, getHomeDirSuggestions, getSpawnDirSuggestions } from '@/modules/providers/services/home-dirs.service.js';
 import { isValidTmuxName, sendToLiveSession, isValidSpawnName, spawnLiveSession, killLiveSession } from '@/modules/providers/services/live-send.service.js';
 import type {
   LLMProvider,
@@ -600,10 +600,14 @@ router.get(
 router.get(
   '/fs/dir-suggestions',
   asyncHandler(async (req: Request, res: Response) => {
-    // Home-relative directory autocomplete (spawn form cwd + files panel root).
-    // Read-only readdir under $HOME, traversal-guarded in the service.
+    // Directory autocomplete. Default scope stays $HOME-relative (files panel
+    // joins home + suggestion, so extra roots would break it); scope=spawn adds
+    // the tower's TOWER_ALLOWED_ROOTS children first — the strings it returns
+    // are exactly what the tower's /spawn cwd resolution accepts.
     const prefix = typeof req.query.prefix === 'string' ? req.query.prefix : '';
-    const suggestions = await getHomeDirSuggestions(prefix);
+    const suggestions = req.query.scope === 'spawn'
+      ? await getSpawnDirSuggestions(prefix)
+      : await getHomeDirSuggestions(prefix);
     res.json(createApiSuccessResponse({ home: getHomeDir(), suggestions }));
   }),
 );

@@ -7,6 +7,8 @@ import test from 'node:test';
 import {
   filterDirSuggestions,
   getHomeDirSuggestions,
+  getSpawnDirSuggestions,
+  parseExtraSpawnRoots,
   splitPrefix,
 } from '@/modules/providers/services/home-dirs.service.js';
 
@@ -59,5 +61,40 @@ test('getHomeDirSuggestions: realpath containment — deep symlink escape return
   } finally {
     await rm(home, { recursive: true, force: true });
     await rm(outside, { recursive: true, force: true });
+  }
+});
+
+test('parseExtraSpawnRoots keeps only absolute csv entries', () => {
+  assert.deepEqual(parseExtraSpawnRoots(undefined), []);
+  assert.deepEqual(parseExtraSpawnRoots(' /Volumes/Data/Dev Workspace , relative/path , '), ['/Volumes/Data/Dev Workspace']);
+});
+
+test('getSpawnDirSuggestions: extra roots first, home after, deduped; empty prefix lists defaults', async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), 'spawn-home-'));
+  const root = await mkdtemp(path.join(os.tmpdir(), 'spawn root-')); // space: 실제 워크스페이스 경로 형태
+  try {
+    await mkdir(path.join(home, 'zeta'));
+    await mkdir(path.join(home, 'shared'));
+    await mkdir(path.join(root, 'aegis-alpha'));
+    await mkdir(path.join(root, 'shared'));
+    await mkdir(path.join(root, 'aegis-alpha', 'sub'));
+
+    // Empty prefix = default list: workspace children first, then home's.
+    assert.deepEqual(
+      await getSpawnDirSuggestions('', home, [root]),
+      ['aegis-alpha', 'shared', 'zeta'],
+    );
+    // Fragment matching hits the workspace root even when home has no match.
+    assert.deepEqual(await getSpawnDirSuggestions('aeg', home, [root]), ['aegis-alpha']);
+    // Nested listing under a workspace child works.
+    assert.deepEqual(await getSpawnDirSuggestions('aegis-alpha/', home, [root]), ['aegis-alpha/sub']);
+    // Traversal/absolute prefixes stay rejected in spawn scope too.
+    assert.deepEqual(await getSpawnDirSuggestions('../x', home, [root]), []);
+    assert.deepEqual(await getSpawnDirSuggestions('/etc/', home, [root]), []);
+    // A missing extra root degrades to home-only.
+    assert.deepEqual(await getSpawnDirSuggestions('sh', home, [path.join(root, 'nope')]), ['shared']);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
   }
 });

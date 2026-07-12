@@ -97,7 +97,8 @@ export default function SidebarSpawnSession() {
         value={cwd}
         onChange={setCwd}
         onSubmit={() => void spawn()}
-        placeholder="작업 폴더 (홈 하위, 예: workspace/my-proj)"
+        placeholder="작업 폴더 (예: aegis-alpha, workspace/my-proj)"
+        scope="spawn"
       />
       {status.kind !== 'idle' && status.kind !== 'spawning' && (
         <p className={status.kind === 'error' ? 'text-[11px] text-red-500' : 'text-[11px] text-blue-600 dark:text-blue-400'}>
