@@ -1593,6 +1593,8 @@ async function startServer() {
             host: HOST,
             hasUsers: userDb.hasUsers(),
             allowRemoteSetup: process.env.ALLOW_REMOTE_SETUP === '1',
+            isPlatformMode: IS_PLATFORM,
+            trustedProxyAuth: process.env.CLOUDCLI_TRUSTED_PROXY_AUTH === '1',
         });
         if (exposure.level === 'block') {
             console.error(`${c.warn('[SECURITY]')} ${exposure.message}`);

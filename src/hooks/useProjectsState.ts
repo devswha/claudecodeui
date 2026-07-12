@@ -369,6 +369,9 @@ export function useProjectsState({
   // session). Only these may carry tmux actions (kill/relay) — cwd-fallback
   // labels killed an unrelated claude tmux session (patina 실사고).
   const [liveSessionLineage, setLiveSessionLineage] = useState<Set<string>>(new Set());
+  // `$N` tmux generation token per session id — sent with kill/relay so the
+  // server can refuse a same-named session recreated after this snapshot.
+  const [liveSessionTmuxIds, setLiveSessionTmuxIds] = useState<Map<string, string>>(new Map());
   const [activeTab, setActiveTab] = useState<AppTab>(readPersistedTab);
 
   useEffect(() => {
@@ -381,40 +384,80 @@ export function useProjectsState({
 
   // Poll which sessions are live in a tmux gjc pane (server tmux+lsof endpoint).
   // Best-effort: on any error / no tmux the set is empty and the UI shows nothing live.
+  //
+  // Two race guards (리뷰 반영):
+  // - generation counter: a delayed older response must never overwrite a newer
+  //   snapshot (stale ownership/action state resurrection).
+  // - removal debounce: a session leaves the live set only after TWO consecutive
+  //   snapshots without it. One transient lsof/tmux hiccup returning an empty/
+  //   partial list must not flip an externally driven session writable.
   useEffect(() => {
     let cancelled = false;
+    let generation = 0;
+    let applied = 0;
+    let prevRows = new Map<string, { tmuxName: string | null; tmuxId: string | null; model: string | null; lineage: boolean }>();
+    let missedOnce = new Set<string>();
     const poll = async () => {
+      const myGeneration = ++generation;
       try {
         const response = await api.liveSessions();
         if (!response.ok) return;
         const body = await response.json();
-        const liveSessions: Array<{ id: string; tmuxName?: string | null; model?: string | null; claim?: string | null }> =
+        const liveSessions: Array<{ id: string; tmuxName?: string | null; tmuxId?: string | null; model?: string | null; claim?: string | null }> =
           body?.data?.liveSessions ?? body?.liveSessions ?? [];
-        const ids: string[] = liveSessions.length > 0
-          ? liveSessions.map((session) => session.id)
-          : (body?.data?.liveSessionIds ?? body?.liveSessionIds ?? []);
-        if (!cancelled) {
-          setLiveSessionIds(new Set(ids));
-          const names = new Map<string, string>();
-          const models = new Map<string, string>();
-          const lineage = new Set<string>();
-          for (const session of liveSessions) {
-            if (session.tmuxName) {
-              names.set(session.id, session.tmuxName);
-            }
-            if (session.model) {
-              models.set(session.id, session.model);
-            }
-            if (session.claim === 'lineage') {
-              lineage.add(session.id);
+        if (cancelled || myGeneration <= applied) {
+          return; // a newer response already landed
+        }
+        applied = myGeneration;
+
+        const rows = new Map<string, { tmuxName: string | null; tmuxId: string | null; model: string | null; lineage: boolean }>();
+        for (const session of liveSessions) {
+          rows.set(session.id, {
+            tmuxName: session.tmuxName ?? null,
+            tmuxId: session.tmuxId ?? null,
+            model: session.model ?? null,
+            lineage: session.claim === 'lineage',
+          });
+        }
+        // Removal debounce: keep a previously seen row for one missing snapshot.
+        const nextMissed = new Set<string>();
+        for (const [id, row] of prevRows) {
+          if (!rows.has(id)) {
+            if (!missedOnce.has(id)) {
+              nextMissed.add(id);
+              rows.set(id, row); // grace period — still treated as live
             }
           }
-          setLiveSessionNames(names);
-          setLiveSessionModels(models);
-          setLiveSessionLineage(lineage);
         }
+        missedOnce = nextMissed;
+        prevRows = rows;
+
+        const names = new Map<string, string>();
+        const tmuxIds = new Map<string, string>();
+        const models = new Map<string, string>();
+        const lineage = new Set<string>();
+        for (const [id, row] of rows) {
+          if (row.tmuxName) {
+            names.set(id, row.tmuxName);
+          }
+          if (row.tmuxId) {
+            tmuxIds.set(id, row.tmuxId);
+          }
+          if (row.model) {
+            models.set(id, row.model);
+          }
+          if (row.lineage) {
+            lineage.add(id);
+          }
+        }
+        setLiveSessionIds(new Set(rows.keys()));
+        setLiveSessionNames(names);
+        setLiveSessionTmuxIds(tmuxIds);
+        setLiveSessionModels(models);
+        setLiveSessionLineage(lineage);
       } catch {
-        // ignore — live detection is best-effort
+        // ignore — live detection is best-effort; last snapshot stays (fail-closed
+        // for read-only protection).
       }
     };
     void poll();
@@ -872,6 +915,13 @@ export function useProjectsState({
       return;
     }
 
+    // Synthetic idle fleet rows (`idle-gjc:<tmux>`) are not sessions: no
+    // transcript, no provider — a placeholder here would become a writable
+    // fake session once the idle row disappears (리뷰 반영). Never route them.
+    if (sessionId.startsWith('idle-gjc:')) {
+      return;
+    }
+
     // Only the currently selected project may host the placeholder. Guessing
     // another project (e.g. "first one with sessions") could bind the URL
     // session to the wrong project — better to wait until the owning project
@@ -1083,6 +1133,7 @@ export function useProjectsState({
       liveSessionIds,
       liveSessionNames,
       liveSessionLineage,
+      liveSessionTmuxIds,
       onProjectSelect: handleProjectSelect,
       onSessionSelect: handleSessionSelect,
       onNewSession: handleNewSession,
@@ -1103,6 +1154,7 @@ export function useProjectsState({
       liveSessionIds,
       liveSessionNames,
       liveSessionLineage,
+      liveSessionTmuxIds,
       handleNewSession,
       handleProjectDelete,
       handleProjectSelect,

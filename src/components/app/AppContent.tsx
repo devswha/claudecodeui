@@ -127,6 +127,8 @@ function AppContentInner() {
   useQueuedMessageAutoSend({
     processingSessions,
     activeSessionId: selectedSession?.id ?? sessionId ?? null,
+    // tmux-owned sessions must never receive an invisible background send.
+    liveSessionIds: sidebarSharedProps.liveSessionIds,
     ws,
     sendMessage,
     markSessionProcessing,
@@ -284,6 +286,11 @@ function AppContentInner() {
             // claims — a cwd-fallback label points at someone else's pane.
             selectedSession && sidebarSharedProps.liveSessionLineage.has(selectedSession.id)
               ? (sidebarSharedProps.liveSessionNames.get(selectedSession.id) ?? null)
+              : null
+          }
+          liveSessionTmuxId={
+            selectedSession && sidebarSharedProps.liveSessionLineage.has(selectedSession.id)
+              ? (sidebarSharedProps.liveSessionTmuxIds.get(selectedSession.id) ?? null)
               : null
           }
           liveSessionModel={selectedSession ? (liveSessionModels.get(selectedSession.id) ?? null) : null}

@@ -47,6 +47,13 @@ interface UseChatComposerStateArgs {
   currentProviderEffort: string;
   opencodeModel: string;
   isLoading: boolean;
+  /**
+   * Session is owned by an external driver (tmux gjc). The composer UI is
+   * hidden, but this hook stays mounted — every dispatch path (submit, queued
+   * flush) must hard-stop here or a saved queued draft could inject a second
+   * driver message into the externally owned session (리뷰 HIGH 반영).
+   */
+  isSessionReadOnly?: boolean;
   canAbortSession: boolean;
   tokenBudget: Record<string, unknown> | null;
   sendMessage: (message: unknown) => void;
@@ -199,6 +206,7 @@ export function useChatComposerState({
   currentProviderEffort,
   opencodeModel,
   isLoading,
+  isSessionReadOnly = false,
   canAbortSession,
   tokenBudget,
   sendMessage,
@@ -649,7 +657,7 @@ export function useChatComposerState({
     ) => {
       event.preventDefault();
       const currentInput = inputValueRef.current;
-      if (!currentInput.trim() || !selectedProject) {
+      if (!currentInput.trim() || !selectedProject || isSessionReadOnly) {
         return;
       }
 
@@ -849,6 +857,7 @@ export function useChatComposerState({
       currentSessionId,
       executeCommand,
       isLoading,
+      isSessionReadOnly,
       onSessionProcessing,
       onSessionEstablished,
       provider,
@@ -884,7 +893,7 @@ export function useChatComposerState({
       return;
     }
 
-    if (isLoading || !queuedDraft) {
+    if (isLoading || !queuedDraft || isSessionReadOnly) {
       return;
     }
 
@@ -910,7 +919,7 @@ export function useChatComposerState({
       }, 0);
     }, delay);
     return () => clearTimeout(timer);
-  }, [isLoading, queuedDraft, sessionKey, setInput]);
+  }, [isLoading, queuedDraft, sessionKey, setInput, isSessionReadOnly]);
 
   const editQueuedDraft = useCallback(() => {
     if (!queuedDraft) {

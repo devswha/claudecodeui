@@ -23,6 +23,7 @@ function ChatInterface({
   selectedSession,
   isSessionReadOnly,
   liveSessionTmuxName,
+  liveSessionTmuxId,
   liveSessionModel,
   ws,
   sendMessage,
@@ -208,6 +209,7 @@ function ChatInterface({
     currentProviderEffort,
     opencodeModel,
     isLoading: isProcessing,
+    isSessionReadOnly,
     canAbortSession,
     tokenBudget,
     sendMessage,
@@ -405,7 +407,9 @@ function ChatInterface({
 
           {isSessionReadOnly ? (
             liveSessionTmuxName ? (
-              <LiveRelayComposer tmuxName={liveSessionTmuxName} model={liveSessionModel} />
+              // key: remount per tmux target — a draft/in-flight status typed
+              // for session A must never survive a switch to target B (리뷰 반영).
+              <LiveRelayComposer key={liveSessionTmuxName} tmuxName={liveSessionTmuxName} tmuxId={liveSessionTmuxId} model={liveSessionModel} />
             ) : (
               <div className="chat-composer-shell relative flex-shrink-0 px-2 pb-3 pt-2 sm:px-4">
                 <div className="mx-auto flex max-w-[54.25rem] items-center gap-2 rounded-xl border border-blue-500/30 bg-blue-500/10 px-4 py-3 text-sm text-blue-700 dark:text-blue-300">

@@ -47,6 +47,9 @@ export type SidebarProps = {
   liveSessionNames: ReadonlyMap<string, string>;
   // Ids whose tmux name is a lineage claim — the only rows allowed tmux actions.
   liveSessionLineage: ReadonlySet<string>;
+  // `$N` tmux generation token per id — passed with kill so a same-named
+  // replacement session is refused server-side.
+  liveSessionTmuxIds: ReadonlyMap<string, string>;
   onProjectSelect: (project: Project) => void;
   onSessionSelect: (session: ProjectSession) => void;
   onNewSession: (project: Project) => void;

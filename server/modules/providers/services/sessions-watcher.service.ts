@@ -50,11 +50,10 @@ type PendingWatcherUpdate = {
   providers: Set<LLMProvider>;
   changeTypes: Set<WatcherEventType>;
   /**
-   * Provider-native session ids reported by the synchronizers. They are
-   * translated back to app-facing session rows at flush time, because the
-   * transcript file names on disk only ever contain provider ids.
+   * Provider-native session ids reported by the synchronizers are grouped by
+   * provider so ids shared by different providers remain distinct.
    */
-  updatedSessionIds: Set<string>;
+  updatedSessionIdsByProvider: Map<LLMProvider, Set<string>>;
 };
 
 let pendingWatcherUpdate: PendingWatcherUpdate | null = null;
@@ -110,14 +109,19 @@ function queuePendingWatcherUpdate(
     pendingWatcherUpdate = {
       providers: new Set<LLMProvider>(),
       changeTypes: new Set<WatcherEventType>(),
-      updatedSessionIds: new Set<string>(),
+      updatedSessionIdsByProvider: new Map<LLMProvider, Set<string>>(),
     };
   }
 
   pendingWatcherUpdate.providers.add(provider);
   pendingWatcherUpdate.changeTypes.add(eventType);
   if (updatedSessionId) {
-    pendingWatcherUpdate.updatedSessionIds.add(updatedSessionId);
+    const updatedSessionIds = pendingWatcherUpdate.updatedSessionIdsByProvider.get(provider);
+    if (updatedSessionIds) {
+      updatedSessionIds.add(updatedSessionId);
+    } else {
+      pendingWatcherUpdate.updatedSessionIdsByProvider.set(provider, new Set([updatedSessionId]));
+    }
   }
 
   schedulePendingWatcherFlush();
@@ -131,8 +135,11 @@ function queuePendingWatcherUpdate(
  * project-list refetch when a transcript file changes on disk. Returns `null`
  * when the id cannot be resolved to an indexed session row.
  */
-async function buildSessionUpsertedEvent(updatedProviderSessionId: string): Promise<string | null> {
-  const row = sessionsDb.getSessionByProviderSessionId(updatedProviderSessionId)
+async function buildSessionUpsertedEvent(
+  provider: LLMProvider,
+  updatedProviderSessionId: string
+): Promise<string | null> {
+  const row = sessionsDb.getSessionByProviderSessionId(provider, updatedProviderSessionId)
     ?? sessionsDb.getSessionById(updatedProviderSessionId);
   if (!row || row.isArchived) {
     return null;
@@ -189,10 +196,12 @@ async function flushPendingWatcherUpdate(): Promise<void> {
     // session can never clobber unrelated client state, so the frontend needs
     // no "suppress updates while a run is active" protection logic.
     const events: string[] = [];
-    for (const updatedSessionId of queuedUpdate.updatedSessionIds) {
-      const event = await buildSessionUpsertedEvent(updatedSessionId);
-      if (event) {
-        events.push(event);
+    for (const [provider, updatedSessionIds] of queuedUpdate.updatedSessionIdsByProvider) {
+      for (const updatedSessionId of updatedSessionIds) {
+        const event = await buildSessionUpsertedEvent(provider, updatedSessionId);
+        if (event) {
+          events.push(event);
+        }
       }
     }
 

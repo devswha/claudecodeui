@@ -35,6 +35,13 @@ export type LiveGjcSession = {
   id: string;
   tmuxName: string | null;
   /**
+   * tmux server-unique session id (`$N`) of the pane backing this row — a
+   * GENERATION token: tmux never reuses `$N` within one server lifetime, so a
+   * kill/send request carrying it cannot hit a same-named replacement session
+   * created after the client's snapshot (이름 재사용 race 차단).
+   */
+  tmuxId: string | null;
+  /**
    * How the tmux name was resolved: 'lineage' = the gjc process runs INSIDE
    * that tmux session (safe to kill/relay); 'cwd' = label-only directory match
    * (the pane belongs to something else — tmux actions are forbidden).
@@ -55,14 +62,16 @@ const IDLE_TMUX_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
  * process but that NO transcript-holding live session claimed. Subtree
  * membership (pane pid → descendants via the ps snapshot) is the same evidence
  * a lineage claim rests on, so tmux actions (kill/relay) remain safe for these
- * rows. Names already used by a named live row are excluded (one row per tmux
- * session). Sorted for stable rendering.
+ * rows. Exclusion is LINEAGE names only: a 'cwd' label is weaker evidence than
+ * the subtree proof, so it must not hide a real idle gjc pane (리뷰 반영 —
+ * 같은 이름의 cwd 라벨 행과 idle 행이 공존할 수 있고 그게 더 정직하다).
+ * Sorted by name for stable rendering; dedupe keeps the first pane's sid.
  */
 export function findIdleGjcTmuxSessions(args: {
-  panes: Array<{ name: string; pid: number }>;
+  panes: Array<{ name: string; sid: string; pid: number }>;
   procs: Array<{ pid: number; ppid: number; comm: string }>;
   excludedNames: ReadonlySet<string>;
-}): string[] {
+}): Array<{ name: string; sid: string }> {
   const children = new Map<number, number[]>();
   const commByPid = new Map<number, string>();
   for (const proc of args.procs) {
@@ -94,16 +103,18 @@ export function findIdleGjcTmuxSessions(args: {
     return false;
   };
 
-  const idle = new Set<string>();
+  const idle = new Map<string, string>();
   for (const pane of args.panes) {
     if (idle.has(pane.name) || args.excludedNames.has(pane.name) || !IDLE_TMUX_NAME_RE.test(pane.name)) {
       continue;
     }
     if (subtreeHasGjc(pane.pid)) {
-      idle.add(pane.name);
+      idle.set(pane.name, pane.sid);
     }
   }
-  return [...idle].sort((a, b) => a.localeCompare(b));
+  return [...idle]
+    .map(([name, sid]) => ({ name, sid }))
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 /** True when `tmux list-panes` reported at least one pane (a tmux server is up). */
@@ -111,23 +122,27 @@ export function tmuxHasPanes(output: string): boolean {
   return output.split(/\r?\n/).some((line) => line.trim().length > 0);
 }
 
-/** Parses `#{session_name}\t#{pane_pid}\t#{pane_current_path}` into {name, pid, cwd}. */
-export function parseTmuxPanes(output: string): Array<{ name: string; pid: number; cwd: string }> {
-  const panes: Array<{ name: string; pid: number; cwd: string }> = [];
+/** Parses `#{session_name}\t#{session_id}\t#{pane_pid}\t#{pane_current_path}` into {name, sid, pid, cwd}. */
+export function parseTmuxPanes(output: string): Array<{ name: string; sid: string; pid: number; cwd: string }> {
+  const panes: Array<{ name: string; sid: string; pid: number; cwd: string }> = [];
   for (const raw of output.split(/\r?\n/)) {
     if (!raw.trim()) {
       continue;
     }
     const first = raw.indexOf(TMUX_FIELD_SEP);
     const second = raw.indexOf(TMUX_FIELD_SEP, first + 1);
-    if (first < 0 || second < 0) {
+    const third = raw.indexOf(TMUX_FIELD_SEP, second + 1);
+    if (first < 0 || second < 0 || third < 0) {
       continue;
     }
     const name = raw.slice(0, first).trim();
-    const pid = Number.parseInt(raw.slice(first + 1, second).trim(), 10);
-    const cwd = raw.slice(second + 1).trim();
-    if (name && Number.isFinite(pid) && cwd) {
-      panes.push({ name, pid, cwd });
+    const sid = raw.slice(first + 1, second).trim();
+    const pid = Number.parseInt(raw.slice(second + 1, third).trim(), 10);
+    const cwd = raw.slice(third + 1).trim();
+    // tmux session ids are `$<number>` — anything else means a format drift we
+    // must not feed into the generation-token contract.
+    if (name && /^\$\d+$/.test(sid) && Number.isFinite(pid) && cwd) {
+      panes.push({ name, sid, pid, cwd });
     }
   }
   return panes;
@@ -168,12 +183,16 @@ export function parseLsofPidSessions(output: string): Array<{ id: string; pid: n
  * conversation title). Holder rows are merged by session id first (main + worker
  * processes), so either process reaching the pane resolves the name. Empty when
  * tmux is absent.
+ *
+ * NOTE (리뷰 판단 기록): 여러 transcript가 같은 pane lineage로 잡히는 경우
+ * (main+worker, 서브에이전트 세션)는 실재하는 정상 구성이라 모두 lineage를
+ * 부여한다 — 그 pane을 죽이면 실제로 전부 죽는 것이 사실이므로.
  */
 export function computeLiveSessions(args: {
   tmuxPresent: boolean;
-  panes: Array<{ name: string; pid: number; cwd: string }>;
+  panes: Array<{ name: string; sid: string; pid: number; cwd: string }>;
   sessions: Array<{ id: string; pidChain: number[]; cwd: string | null }>;
-}): Array<Pick<LiveGjcSession, 'id' | 'tmuxName' | 'claim'>> {
+}): Array<Pick<LiveGjcSession, 'id' | 'tmuxName' | 'tmuxId' | 'claim'>> {
   if (!args.tmuxPresent) {
     return [];
   }
@@ -200,21 +219,23 @@ export function computeLiveSessions(args: {
   }
 
   const claimed = new Set<number>();
-  const result = new Map<string, { tmuxName: string | null; claim: 'lineage' | 'cwd' | null }>();
+  const result = new Map<string, { tmuxName: string | null; tmuxId: string | null; claim: 'lineage' | 'cwd' | null }>();
 
   // Pass 1: lineage matches claim their pane (authoritative, run for ALL sessions
   // before any cwd fallback so claims are complete).
   for (const [id, session] of merged) {
     let name: string | null = null;
+    let sid: string | null = null;
     for (const pid of session.pidChain) {
       const index = panePidToIndex.get(pid);
       if (index !== undefined) {
         name = args.panes[index].name;
+        sid = args.panes[index].sid;
         claimed.add(index);
         break;
       }
     }
-    result.set(id, { tmuxName: name, claim: name !== null ? 'lineage' : null });
+    result.set(id, { tmuxName: name, tmuxId: sid, claim: name !== null ? 'lineage' : null });
   }
 
   // Pass 2: cwd fallback to an UNCLAIMED pane, only when the match is unique.
@@ -229,30 +250,45 @@ export function computeLiveSessions(args: {
       // A cwd match only LABELS the row: the gjc process is NOT inside the
       // pane, so tmux-session actions (kill/relay) must never key off it —
       // 실사고: patina의 백그라운드 gjc 행을 닫자 무관한 claude tmux가 죽음.
-      result.set(id, { tmuxName: candidates[0].pane.name, claim: 'cwd' });
+      result.set(id, { tmuxName: candidates[0].pane.name, tmuxId: candidates[0].pane.sid, claim: 'cwd' });
       claimed.add(candidates[0].index);
     }
   }
 
-  return [...result].map(([id, entry]) => ({ id, tmuxName: entry.tmuxName, claim: entry.claim }));
+  return [...result].map(([id, entry]) => ({ id, tmuxName: entry.tmuxName, tmuxId: entry.tmuxId, claim: entry.claim }));
 }
+
+// Detection subprocess output is small (pane lists / lsof field lines); a multi-
+// megabyte stream means something is pathologically wrong — kill instead of
+// buffering without bound (리뷰 반영: timeout 뒤에도 listener/버퍼가 남던 문제).
+const RUN_COMMAND_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 
 function runCommand(command: string, cmdArgs: string[], timeoutMs = 4000): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, cmdArgs, { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
     let stdout = '';
+    let size = 0;
     let settled = false;
-    const timer = setTimeout(() => {
+    const fail = (error: Error) => {
       if (!settled) {
         settled = true;
+        clearTimeout(timer);
+        child.stdout.removeAllListeners('data');
+        child.stdout.resume(); // keep draining so the child can exit
         child.kill('SIGKILL');
-        reject(new Error(`${command} timed out`));
+        reject(error);
       }
-    }, timeoutMs);
-    child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
-    child.on('error', (error) => {
-      if (!settled) { settled = true; clearTimeout(timer); reject(error); }
+    };
+    const timer = setTimeout(() => fail(new Error(`${command} timed out`)), timeoutMs);
+    child.stdout.on('data', (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > RUN_COMMAND_MAX_OUTPUT_BYTES) {
+        fail(new Error(`${command} output exceeded ${RUN_COMMAND_MAX_OUTPUT_BYTES} bytes`));
+        return;
+      }
+      stdout += chunk.toString();
     });
+    child.on('error', (error) => fail(error));
     child.on('close', () => {
       if (!settled) { settled = true; clearTimeout(timer); resolve(stdout); }
     });
@@ -404,29 +440,50 @@ async function readLastModelFromFile(path: string): Promise<string | null> {
 }
 
 /**
- * Returns live gjc sessions with their tmux session name. Empty on any failure
- * (no tmux/lsof, spawn error) — tmux/lsof/proc dependence is confined here.
+ * Returns live gjc sessions with their tmux session name + generation id.
+ * Empty when tmux is absent. lsof failure no longer empties the list — the
+ * ps-subtree idle lane is independent evidence and keeps running (리뷰 반영);
+ * transcript-backed rows are simply absent for that poll.
+ *
+ * Concurrent callers share one in-flight scan (single-flight): several browser
+ * clients poll every 5s, and overlapping tmux/lsof/ps storms were themselves
+ * causing the transient misses this lane exists to avoid.
  */
+let liveScanInFlight: Promise<LiveGjcSession[]> | null = null;
+
 export async function getLiveGjcSessions(): Promise<LiveGjcSession[]> {
+  if (liveScanInFlight) {
+    return liveScanInFlight;
+  }
+  liveScanInFlight = scanLiveGjcSessions().finally(() => {
+    liveScanInFlight = null;
+  });
+  return liveScanInFlight;
+}
+
+async function scanLiveGjcSessions(): Promise<LiveGjcSession[]> {
   let tmuxOutput: string;
   try {
-    tmuxOutput = await runCommand('tmux', ['list-panes', '-a', '-F', `#{session_name}${TMUX_FIELD_SEP}#{pane_pid}${TMUX_FIELD_SEP}#{pane_current_path}`]);
+    tmuxOutput = await runCommand('tmux', ['list-panes', '-a', '-F', `#{session_name}${TMUX_FIELD_SEP}#{session_id}${TMUX_FIELD_SEP}#{pane_pid}${TMUX_FIELD_SEP}#{pane_current_path}`]);
   } catch {
     return [];
   }
   if (!tmuxHasPanes(tmuxOutput)) {
     return [];
   }
-  const panes: Array<{ name: string; pid: number; cwd: string }> = [];
+  const panes: Array<{ name: string; sid: string; pid: number; cwd: string }> = [];
   for (const pane of parseTmuxPanes(tmuxOutput)) {
-    panes.push({ name: pane.name, pid: pane.pid, cwd: (await safeRealpath(pane.cwd)) ?? pane.cwd });
+    panes.push({ name: pane.name, sid: pane.sid, pid: pane.pid, cwd: (await safeRealpath(pane.cwd)) ?? pane.cwd });
   }
 
-  let lsofOutput: string;
+  // Transcript lane (lsof). A transient lsof failure must not blank the whole
+  // fleet: fall through with zero transcript-backed sessions and let the idle
+  // lane still report gjc panes.
+  let lsofOutput = '';
   try {
     lsofOutput = await runCommand('lsof', ['-c', 'gjc', '-F', 'pn']);
   } catch {
-    return [];
+    lsofOutput = '';
   }
   const sessions: Array<{ id: string; pidChain: number[]; cwd: string | null }> = [];
   for (const { id, pid } of parseLsofPidSessions(lsofOutput)) {
@@ -441,14 +498,17 @@ export async function getLiveGjcSessions(): Promise<LiveGjcSession[]> {
   const named = computeLiveSessions({ tmuxPresent: true, panes, sessions });
 
   // gjc panes with no open transcript (first message pending). Best-effort:
-  // a ps failure only hides idle rows, never the lsof-backed ones.
-  let idleNames: string[] = [];
+  // a ps failure only hides idle rows, never the lsof-backed ones. Exclusion
+  // is LINEAGE names only — a cwd label must not hide a subtree-proven pane.
+  let idlePanes: Array<{ name: string; sid: string }> = [];
   try {
     const psOutput = await runCommand('ps', ['-eo', 'pid,ppid,comm']);
-    idleNames = findIdleGjcTmuxSessions({
+    idlePanes = findIdleGjcTmuxSessions({
       panes,
       procs: parsePsTree(psOutput),
-      excludedNames: new Set(named.flatMap((session) => (session.tmuxName ? [session.tmuxName] : []))),
+      excludedNames: new Set(
+        named.flatMap((session) => (session.claim === 'lineage' && session.tmuxName ? [session.tmuxName] : [])),
+      ),
     });
   } catch {
     // ignore — the idle lane is additive
@@ -463,9 +523,10 @@ export async function getLiveGjcSessions(): Promise<LiveGjcSession[]> {
   );
   return [
     ...enriched,
-    ...idleNames.map((name) => ({
+    ...idlePanes.map(({ name, sid }) => ({
       id: `${IDLE_GJC_ID_PREFIX}${name}`,
       tmuxName: name,
+      tmuxId: sid,
       // Subtree-proven: a gjc process runs INSIDE the pane — same evidence
       // grade as a lineage claim, so kill/relay stay permitted and safe.
       claim: 'lineage' as const,

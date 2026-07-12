@@ -19,7 +19,7 @@ type RelayStatus =
  * transcript's last model_change, threaded through the live poll) — the tmux
  * name stays as a muted suffix so the send target remains identifiable.
  */
-export default function LiveRelayComposer({ tmuxName, model = null }: { tmuxName: string; model?: string | null }) {
+export default function LiveRelayComposer({ tmuxName, tmuxId = null, model = null }: { tmuxName: string; tmuxId?: string | null; model?: string | null }) {
   const [input, setInput] = useState('');
   const [status, setStatus] = useState<RelayStatus>({ kind: 'idle' });
 
@@ -30,7 +30,7 @@ export default function LiveRelayComposer({ tmuxName, model = null }: { tmuxName
     }
     setStatus({ kind: 'sending' });
     try {
-      const response = await api.liveSessionSend(tmuxName, message);
+      const response = await api.liveSessionSend(tmuxName, message, tmuxId);
       const body = await response.json().catch(() => null);
       const data = (body?.data ?? body ?? {}) as { ok?: boolean; reachable?: boolean; queued?: boolean; detail?: string };
       // ok === false covers "tower reachable but refused/failed" (server wraps a

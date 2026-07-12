@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 
 import type { Project, ProjectSession } from '../../../../types/app';
@@ -16,6 +16,9 @@ type SidebarLiveSectionProps = {
   // session). cwd-fallback labels are display-only: offering kill there killed
   // an unrelated claude tmux session (patina 실사고).
   liveSessionLineage: ReadonlySet<string>;
+  // `$N` tmux generation token per id — sent with kill so the server refuses a
+  // same-named session recreated after this snapshot (409).
+  liveSessionTmuxIds: ReadonlyMap<string, string>;
   selectedSession: ProjectSession | null;
   onSessionSelect: SidebarProjectListProps['onSessionSelect'];
 };
@@ -57,6 +60,7 @@ export default function SidebarLiveSection({
   liveSessionIds,
   liveSessionNames,
   liveSessionLineage,
+  liveSessionTmuxIds,
   selectedSession,
   onSessionSelect,
 }: SidebarLiveSectionProps) {
@@ -64,6 +68,21 @@ export default function SidebarLiveSection({
   // live poll is the source of truth and will drop them for real.
   const [killedIds, setKilledIds] = useState<ReadonlySet<string>>(new Set());
   const [killStatus, setKillStatus] = useState<Map<string, KillStatus>>(new Map());
+
+  // Reconcile row-local state with each authoritative snapshot (리뷰 반영):
+  // ids the poll no longer reports drop their killed/confirm/error state, so a
+  // later id reuse (e.g. idle-gjc:<name> after a new gjc boots there) renders
+  // fresh instead of staying hidden or showing a stale confirm strip.
+  useEffect(() => {
+    setKilledIds((prev) => {
+      const next = new Set([...prev].filter((id) => liveSessionIds.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+    setKillStatus((prev) => {
+      const next = new Map([...prev].filter(([id]) => liveSessionIds.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [liveSessionIds]);
 
   if (liveSessionIds.size === 0) {
     return null;
@@ -103,7 +122,7 @@ export default function SidebarLiveSection({
   const kill = async (sessionId: string, tmuxName: string) => {
     setStatusOf(sessionId, { kind: 'killing' });
     try {
-      const response = await api.liveSessionKill(tmuxName);
+      const response = await api.liveSessionKill(tmuxName, liveSessionTmuxIds.get(sessionId) ?? null);
       const body = await response.json().catch(() => null);
       const data = (body?.data ?? body ?? {}) as {
         ok?: boolean;
@@ -119,11 +138,13 @@ export default function SidebarLiveSection({
       }
       const text = data.reachable === false
         ? '관제탑 미가동 — 종료 불가'
-        : data.protected
-          ? '보호 세션 — 관제탑에서 수동으로만'
-          : data.unknown
-            ? '세션을 찾지 못함 (이미 종료됐을 수 있음)'
-            : (typeof body?.error === 'string' && body.error) || data.detail || '세션 종료 실패';
+        : response.status === 409
+          ? '대상이 교체됨 — 같은 이름의 다른 세션 (목록 갱신 후 재시도)'
+          : data.protected
+            ? '보호 세션 — 관제탑에서 수동으로만'
+            : data.unknown
+              ? '세션을 찾지 못함 (이미 종료됐을 수 있음)'
+              : (typeof body?.error === 'string' && body.error) || data.detail || '세션 종료 실패';
       setStatusOf(sessionId, { kind: 'error', text });
     } catch {
       setStatusOf(sessionId, { kind: 'error', text: '세션 종료 실패' });

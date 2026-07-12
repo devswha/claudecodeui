@@ -100,7 +100,6 @@ export const sessionsDb = {
            updated_at = COALESCE(?, CURRENT_TIMESTAMP),
            project_path = ?,
            jsonl_path = ?,
-           isArchived = 0,
            custom_name = COALESCE(?, custom_name)
          WHERE session_id = ?`
       ).run(
@@ -127,7 +126,6 @@ export const sessionsDb = {
          updated_at = excluded.updated_at,
          project_path = excluded.project_path,
          jsonl_path = excluded.jsonl_path,
-         isArchived = 0,
          custom_name = COALESCE(excluded.custom_name, sessions.custom_name)`
     ).run(
       providerSessionId,
@@ -174,38 +172,59 @@ export const sessionsDb = {
    * are adopted and the duplicate row is removed. Runs in a transaction so
    * the sidebar can never observe both rows at once.
    */
-  assignProviderSessionId(sessionId: string, providerSessionId: string): void {
+  assignProviderSessionId(sessionId: string, provider: string, providerSessionId: string): void {
     const db = getConnection();
 
     const merge = db.transaction(() => {
+      const target = db
+        .prepare(
+          `SELECT session_id FROM sessions
+           WHERE session_id = ? AND provider = ?
+           LIMIT 1`
+        )
+        .get(sessionId, provider) as { session_id: string } | undefined;
+
+      if (!target) {
+        throw new Error(
+          `Cannot assign provider session id: target session "${sessionId}" for provider "${provider}" was not found`
+        );
+      }
+
       const duplicate = db
         .prepare(
           `SELECT ${SESSION_ROW_COLUMNS} FROM sessions
-           WHERE (session_id = ? OR provider_session_id = ?)
+           WHERE provider = ?
+             AND (session_id = ? OR provider_session_id = ?)
              AND session_id <> ?
            LIMIT 1`
         )
-        .get(providerSessionId, providerSessionId, sessionId) as SessionRow | undefined;
+        .get(provider, providerSessionId, providerSessionId, sessionId) as SessionRow | undefined;
 
-      if (duplicate) {
-        db.prepare('DELETE FROM sessions WHERE session_id = ?').run(duplicate.session_id);
-        db.prepare(
-          `UPDATE sessions SET
-             provider_session_id = ?,
-             jsonl_path = COALESCE(jsonl_path, ?),
-             custom_name = COALESCE(custom_name, ?),
-             updated_at = CURRENT_TIMESTAMP
-           WHERE session_id = ?`
-        ).run(providerSessionId, duplicate.jsonl_path, duplicate.custom_name, sessionId);
-        return;
-      }
-
-      db.prepare(
+      const assignment = db.prepare(
         `UPDATE sessions SET
            provider_session_id = ?,
+           jsonl_path = COALESCE(jsonl_path, ?),
+           custom_name = COALESCE(custom_name, ?),
            updated_at = CURRENT_TIMESTAMP
-         WHERE session_id = ?`
-      ).run(providerSessionId, sessionId);
+         WHERE session_id = ? AND provider = ?`
+      ).run(
+        providerSessionId,
+        duplicate?.jsonl_path ?? null,
+        duplicate?.custom_name ?? null,
+        sessionId,
+        provider
+      );
+
+      if (assignment.changes !== 1) {
+        throw new Error(
+          `Cannot assign provider session id: target session "${sessionId}" for provider "${provider}" was not updated`
+        );
+      }
+
+      if (duplicate) {
+        db.prepare('DELETE FROM sessions WHERE session_id = ? AND provider = ?')
+          .run(duplicate.session_id, provider);
+      }
     });
 
     merge();
@@ -242,17 +261,18 @@ export const sessionsDb = {
    * file names), so it uses this lookup to translate disk artifacts back to
    * the app-facing session row before broadcasting sidebar updates.
    */
-  getSessionByProviderSessionId(providerSessionId: string): SessionRow | null {
+  getSessionByProviderSessionId(provider: string, providerSessionId: string): SessionRow | null {
     const db = getConnection();
     const row = db
       .prepare(
         `SELECT ${SESSION_ROW_COLUMNS}
          FROM sessions
-         WHERE provider_session_id = ?
+         WHERE provider = ?
+           AND provider_session_id = ?
          ORDER BY updated_at DESC
          LIMIT 1`
       )
-      .get(providerSessionId) as SessionRow | undefined;
+      .get(provider, providerSessionId) as SessionRow | undefined;
 
     return normalizeSessionRow(row) ?? null;
   },

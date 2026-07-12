@@ -38,7 +38,7 @@ test('disk-discovered sessions are keyed by the provider id for both columns', a
     assert.equal(row?.session_id, 'provider-abc');
     assert.equal(row?.provider_session_id, 'provider-abc');
 
-    const byProviderId = sessionsDb.getSessionByProviderSessionId('provider-abc');
+    const byProviderId = sessionsDb.getSessionByProviderSessionId('claude', 'provider-abc');
     assert.equal(byProviderId?.session_id, 'provider-abc');
   });
 });
@@ -46,7 +46,7 @@ test('disk-discovered sessions are keyed by the provider id for both columns', a
 test('app sessions get the provider id assigned without creating a duplicate row', async () => {
   await withIsolatedDatabase(() => {
     sessionsDb.createAppSession('app-id-1', 'claude', '/workspace/demo');
-    sessionsDb.assignProviderSessionId('app-id-1', 'provider-xyz');
+    sessionsDb.assignProviderSessionId('app-id-1', 'claude', 'provider-xyz');
 
     // A later synchronizer pass that discovers the transcript on disk must
     // update the app row in place instead of inserting a provider-keyed row.
@@ -86,7 +86,7 @@ test('assignProviderSessionId merges a watcher-created duplicate into the app ro
     );
     assert.equal(sessionsDb.getAllSessions().length, 2);
 
-    sessionsDb.assignProviderSessionId('app-id-2', 'provider-race');
+    sessionsDb.assignProviderSessionId('app-id-2', 'codex', 'provider-race');
 
     const rows = sessionsDb.getAllSessions();
     assert.equal(rows.length, 1);
@@ -103,6 +103,38 @@ test('legacy provider-keyed rows stay resolvable through both lookups', async ()
     sessionsDb.createSession('legacy-1', 'opencode', '/workspace/demo');
 
     assert.equal(sessionsDb.getSessionById('legacy-1')?.provider, 'opencode');
-    assert.equal(sessionsDb.getSessionByProviderSessionId('legacy-1')?.session_id, 'legacy-1');
+    assert.equal(sessionsDb.getSessionByProviderSessionId('opencode', 'legacy-1')?.session_id, 'legacy-1');
+  });
+});
+test('provider session mappings do not cross provider boundaries', async () => {
+  await withIsolatedDatabase(() => {
+    sessionsDb.createSession('shared-provider-id', 'claude', '/workspace/claude', 'Claude Session');
+    sessionsDb.createAppSession('codex-app-id', 'codex', '/workspace/codex');
+
+    sessionsDb.assignProviderSessionId('codex-app-id', 'codex', 'shared-provider-id');
+
+    assert.equal(
+      sessionsDb.getSessionByProviderSessionId('claude', 'shared-provider-id')?.session_id,
+      'shared-provider-id'
+    );
+    assert.equal(
+      sessionsDb.getSessionByProviderSessionId('codex', 'shared-provider-id')?.session_id,
+      'codex-app-id'
+    );
+    assert.equal(sessionsDb.getAllSessions().length, 2);
+  });
+});
+
+test('assignProviderSessionId preserves watcher rows when its target was deleted', async () => {
+  await withIsolatedDatabase(() => {
+    sessionsDb.createAppSession('deleted-app-id', 'claude', '/workspace/demo');
+    sessionsDb.deleteSessionById('deleted-app-id');
+    sessionsDb.createSession('watcher-session-id', 'claude', '/workspace/demo', 'Watcher Session');
+
+    assert.throws(
+      () => sessionsDb.assignProviderSessionId('deleted-app-id', 'claude', 'watcher-session-id'),
+      /target session "deleted-app-id" for provider "claude" was not found/
+    );
+    assert.equal(sessionsDb.getSessionById('watcher-session-id')?.session_id, 'watcher-session-id');
   });
 });

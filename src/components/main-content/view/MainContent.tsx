@@ -38,6 +38,7 @@ function MainContent({
   selectedSession,
   isSessionReadOnly,
   liveSessionTmuxName,
+  liveSessionTmuxId,
   liveSessionModel,
   activeTab,
   setActiveTab,
@@ -248,6 +249,7 @@ function MainContent({
                 selectedSession={selectedSession}
                 isSessionReadOnly={isSessionReadOnly}
                 liveSessionTmuxName={liveSessionTmuxName}
+                liveSessionTmuxId={liveSessionTmuxId}
                 liveSessionModel={liveSessionModel}
                 ws={ws}
                 sendMessage={sendMessage}

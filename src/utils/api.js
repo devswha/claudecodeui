@@ -69,10 +69,17 @@ export const api = {
   // Session ids currently live in a tmux gjc pane (tmux+lsof; [] when no tmux).
   liveSessions: () => authenticatedFetch('/api/providers/sessions/live'),
   // Relay a message into a live tmux gjc session via the control tower (POST /send).
-  liveSessionSend: (tmuxName, message) =>
+  // `tmuxId` ($N generation token) makes the server refuse a same-named session
+  // that replaced the one this client saw.
+  /**
+   * @param {string} tmuxName
+   * @param {string} message
+   * @param {string | null} [tmuxId]
+   */
+  liveSessionSend: (tmuxName, message, tmuxId = null) =>
     authenticatedFetch('/api/providers/sessions/live/send', {
       method: 'POST',
-      body: JSON.stringify({ tmuxName, message }),
+      body: JSON.stringify(tmuxId ? { tmuxName, tmuxId, message } : { tmuxName, message }),
     }),
   // Spawn a new tmux gjc session via the control tower (POST /spawn).
   liveSessionSpawn: (name, cwd) =>
@@ -82,10 +89,14 @@ export const api = {
     }),
   // Kill a live tmux session via the control tower (POST /kill). The tower is
   // the fleet-lifecycle authority — protected sessions are refused there.
-  liveSessionKill: (tmuxName) =>
+  /**
+   * @param {string} tmuxName
+   * @param {string | null} [tmuxId]
+   */
+  liveSessionKill: (tmuxName, tmuxId = null) =>
     authenticatedFetch('/api/providers/sessions/live/kill', {
       method: 'POST',
-      body: JSON.stringify({ tmuxName }),
+      body: JSON.stringify(tmuxId ? { tmuxName, tmuxId } : { tmuxName }),
     }),
   // External CLI (claude/codex) tmux sessions for the terminal-attach lane.
   externalSessions: () => authenticatedFetch('/api/providers/sessions/external'),

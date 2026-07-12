@@ -1,9 +1,10 @@
 import os from 'node:os';
 import path from 'node:path';
 import { createReadStream } from 'node:fs';
+import { realpath, stat } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 
-import { sessionsDb } from '@/modules/database/index.js';
+import { appConfigDb, sessionsDb } from '@/modules/database/index.js';
 import {
   extractFirstValidJsonlData,
   findFilesRecursivelyCreatedAfter,
@@ -14,6 +15,13 @@ import type { IProviderSessionSynchronizer } from '@/shared/interfaces.js';
 import type { AnyRecord } from '@/shared/types.js';
 
 const UNTITLED_GJC_SESSION = 'Untitled gjc Session';
+const GJC_INITIAL_SCAN_DONE_KEY = 'gjc_initial_scan_done';
+const GJC_PENDING_SESSION_FILES_KEY = 'gjc_pending_session_files';
+
+type SessionFile = {
+  filePath: string;
+  rootPath: string;
+};
 
 type ParsedSession = {
   sessionId: string;
@@ -60,49 +68,143 @@ function extractGjcTextFromContent(content: unknown): string {
  */
 export class GjcSessionSynchronizer implements IProviderSessionSynchronizer {
   private readonly provider = 'gjc' as const;
-  private readonly gjcHome = path.join(os.homedir(), '.gjc', 'agent');
-
   private readonly sessionsDir = path.join(os.homedir(), '.gjc', 'agent', 'sessions');
+  private readonly liveSessionsDir = process.env.GJC_LIVE_SESSION_DIR
+    || path.join(os.tmpdir(), 'gjc-live-sessions');
 
   /**
    * A top-level session is `sessions/<cwd-slug>/<ts>_<uuid>.jsonl`. Subagent
    * transcripts (e.g. ralplan passes like `2-CriticPass1.jsonl`) live one level
    * deeper inside the session's sidecar dir `sessions/<slug>/<ts>_<uuid>/*.jsonl`
    * and relate to the parent session; indexing them as standalone sessions
-   * pollutes the sidebar (~5.5x). Only depth-2 files are real sessions.
+   * pollutes the sidebar (~5.5x). Only depth-1 and depth-2 files are real
+   * sessions because `--session-dir` may write directly into its root.
    */
-  private isSubagentTranscript(filePath: string): boolean {
-    const rel = path.relative(this.sessionsDir, filePath);
+  private async isSubagentTranscript(filePath: string, sessionRoot: string): Promise<boolean> {
+    const [resolvedRoot, resolvedFile] = await Promise.all([
+      this.resolveRealpathOrOriginal(sessionRoot),
+      this.resolveRealpathOrOriginal(filePath),
+    ]);
+    const rel = path.relative(resolvedRoot, resolvedFile);
+    if (!rel || rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
+      return false;
+    }
+
     return rel.split(path.sep).length > 2;
   }
 
+  private getSessionRoots(): string[] {
+    return [...new Set([this.sessionsDir, this.liveSessionsDir])];
+  }
+
+  private async getSessionRootForFile(filePath: string): Promise<string | null> {
+    for (const sessionRoot of this.getSessionRoots()) {
+      const [resolvedRoot, resolvedFile] = await Promise.all([
+        this.resolveRealpathOrOriginal(sessionRoot),
+        this.resolveRealpathOrOriginal(filePath),
+      ]);
+      const rel = path.relative(resolvedRoot, resolvedFile);
+      if (rel && rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel)) {
+        return sessionRoot;
+      }
+    }
+
+    return null;
+  }
+
+  private async resolveRealpathOrOriginal(target: string): Promise<string> {
+    try {
+      return await realpath(target);
+    } catch {
+      return target;
+    }
+  }
+
+  private getPendingSessionFiles(): Map<string, SessionFile> {
+    const rawPendingFiles = appConfigDb.get(GJC_PENDING_SESSION_FILES_KEY);
+    if (!rawPendingFiles) {
+      return new Map();
+    }
+
+    try {
+      const pendingFiles = JSON.parse(rawPendingFiles);
+      if (!Array.isArray(pendingFiles)) {
+        return new Map();
+      }
+
+      return new Map(
+        pendingFiles
+          .filter((file): file is SessionFile => (
+            file
+            && typeof file === 'object'
+            && typeof file.filePath === 'string'
+            && typeof file.rootPath === 'string'
+          ))
+          .map((file) => [file.filePath, file])
+      );
+    } catch {
+      return new Map();
+    }
+  }
+
+  private savePendingSessionFiles(pendingFiles: Map<string, SessionFile>): void {
+    appConfigDb.set(GJC_PENDING_SESSION_FILES_KEY, JSON.stringify([...pendingFiles.values()]));
+  }
+
+  private async fileExists(filePath: string): Promise<boolean> {
+    try {
+      return (await stat(filePath)).isFile();
+    } catch {
+      return false;
+    }
+  }
+
   /**
-   * Scans ~/.gjc/agent/sessions and upserts discovered sessions into DB.
+   * Scans persisted and live gjc session directories and upserts discovered sessions into DB.
    */
   async synchronize(since?: Date): Promise<number> {
-    const files = await findFilesRecursivelyCreatedAfter(
-      path.join(this.gjcHome, 'sessions'),
-      '.jsonl',
-      since ?? null
-    );
+    const initialScanDone = appConfigDb.get(GJC_INITIAL_SCAN_DONE_KEY) === 'true';
+    const scanSince = initialScanDone ? since ?? null : null;
+    const sessionFiles = new Map<string, SessionFile>();
+    const pendingFiles = this.getPendingSessionFiles();
+
+    for (const sessionRoot of this.getSessionRoots()) {
+      const files = await findFilesRecursivelyCreatedAfter(sessionRoot, '.jsonl', scanSince);
+      for (const filePath of files) {
+        sessionFiles.set(filePath, { filePath, rootPath: sessionRoot });
+      }
+    }
+
+    for (const pendingFile of pendingFiles.values()) {
+      if (await this.fileExists(pendingFile.filePath)) {
+        sessionFiles.set(pendingFile.filePath, pendingFile);
+      } else {
+        pendingFiles.delete(pendingFile.filePath);
+      }
+    }
 
     let processed = 0;
     let iterated = 0;
-    for (const filePath of files) {
+    for (const { filePath, rootPath } of sessionFiles.values()) {
       // Yield to the event loop periodically so a large first-index full sync
       // (thousands of sessions, concurrent with other providers) doesn't starve it.
       if (++iterated % 50 === 0) {
         await new Promise((resolve) => setImmediate(resolve));
       }
-      if (this.isSubagentTranscript(filePath)) {
+      if (await this.isSubagentTranscript(filePath, rootPath)) {
+        pendingFiles.delete(filePath);
         continue;
       }
       const parsed = await this.processSessionFile(filePath);
       if (!parsed) {
+        // A live transcript can be observed while its header is still being written.
+        // Keep it outside the shared scan cursor so a later scan retries it.
+        pendingFiles.set(filePath, { filePath, rootPath });
         continue;
       }
+      pendingFiles.delete(filePath);
 
-      const existingSession = sessionsDb.getSessionByProviderSessionId(parsed.sessionId)
+      const existingSession = sessionsDb.getSessionByProviderSessionId(this.provider, parsed.sessionId)
         ?? sessionsDb.getSessionById(parsed.sessionId);
       if (existingSession) {
         // If the session is still untitled and we now have a name, update it.
@@ -128,6 +230,11 @@ export class GjcSessionSynchronizer implements IProviderSessionSynchronizer {
       processed += 1;
     }
 
+    this.savePendingSessionFiles(pendingFiles);
+    if (!initialScanDone && pendingFiles.size === 0) {
+      appConfigDb.set(GJC_INITIAL_SCAN_DONE_KEY, 'true');
+    }
+
     return processed;
   }
 
@@ -139,7 +246,8 @@ export class GjcSessionSynchronizer implements IProviderSessionSynchronizer {
       return null;
     }
 
-    if (this.isSubagentTranscript(filePath)) {
+    const sessionRoot = await this.getSessionRootForFile(filePath);
+    if (!sessionRoot || await this.isSubagentTranscript(filePath, sessionRoot)) {
       return null;
     }
 
@@ -170,7 +278,7 @@ export class GjcSessionSynchronizer implements IProviderSessionSynchronizer {
       const sessionId = typeof data.id === 'string' ? data.id : undefined;
       const projectPath = typeof data.cwd === 'string' ? data.cwd : undefined;
 
-      if (!sessionId || !projectPath) {
+      if (data.type !== 'session' || !sessionId || !projectPath) {
         return null;
       }
 
@@ -184,7 +292,7 @@ export class GjcSessionSynchronizer implements IProviderSessionSynchronizer {
       return null;
     }
 
-    const existingSession = sessionsDb.getSessionByProviderSessionId(parsed.sessionId)
+    const existingSession = sessionsDb.getSessionByProviderSessionId(this.provider, parsed.sessionId)
       ?? sessionsDb.getSessionById(parsed.sessionId);
     const existingSessionName = existingSession?.custom_name;
     if (existingSessionName && existingSessionName !== UNTITLED_GJC_SESSION) {

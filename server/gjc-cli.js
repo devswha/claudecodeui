@@ -15,10 +15,54 @@ const spawnFunction = crossSpawn;
 
 const PROVIDER = 'gjc';
 
-// sessionId -> child process. Keyed by the gjc session id once the header event
-// announces it (falls back to a synthetic key until then). Mirrors
-// activeOpenCodeProcesses.
+// Stable run-handle and provider-session id aliases -> child process. A fresh
+// run is registered by handle before its NDJSON header reveals the provider id.
 const activeGjcProcesses = new Map();
+const MAX_PROMPT_BYTES = 10 * 1024 * 1024;
+const MAX_NDJSON_LINE_BYTES = 32 * 1024 * 1024;
+const ABORT_GRACE_PERIOD_MS = 5000;
+
+/**
+ * Adds a process under a stable run key or provider-session alias. The caller
+ * owns the Map, which keeps this lifecycle behavior testable without spawning.
+ */
+export function registerGjcProcessAlias(processes, sessionKey, gjcProcess) {
+  if (!sessionKey || !gjcProcess) {
+    return;
+  }
+
+  const sessionKeys = gjcProcess.gjcSessionKeys || new Set();
+  sessionKeys.add(sessionKey);
+  gjcProcess.gjcSessionKeys = sessionKeys;
+  processes.set(sessionKey, gjcProcess);
+}
+
+function removeGjcProcessAliases(processes, gjcProcess) {
+  for (const sessionKey of gjcProcess.gjcSessionKeys || []) {
+    if (processes.get(sessionKey) === gjcProcess) {
+      processes.delete(sessionKey);
+    }
+  }
+}
+
+/**
+ * Sends a signal to the whole detached process group where supported. On
+ * Windows, Node cannot signal a POSIX process group, so retain child.kill().
+ */
+function signalGjcProcess(gjcProcess, signal) {
+  try {
+    if (process.platform !== 'win32' && Number.isInteger(gjcProcess.pid) && gjcProcess.pid > 0) {
+      return process.kill(-gjcProcess.pid, signal);
+    }
+
+    return gjcProcess.kill(signal) === true;
+  } catch (error) {
+    if (error?.code !== 'ESRCH') {
+      console.warn(`[gjc] Failed to send ${signal}:`, error);
+    }
+    return false;
+  }
+}
 
 // Default scratch directory for session storage. Passing `--session-dir` keeps
 // live runs from writing into the real `~/.gjc/agent/sessions` store; auth and
@@ -28,22 +72,20 @@ const activeGjcProcesses = new Map();
 const DEFAULT_SESSION_DIR = path.join(os.tmpdir(), 'gjc-live-sessions');
 
 /**
- * Builds the gjc prompt argv token. gjc's parser treats any token starting with
- * `-` as a flag (even after a `--` separator), so a dash-leading chat message
- * would be swallowed into an empty prompt. gjc reads a prompt from a file via the
- * `@<path>` mention and file content is never arg-parsed, so dash-leading messages
- * are written to a temp file and passed as `@file`. Plain messages pass through as
- * a positional. Returns the argv token and the temp file to clean up (or null).
+ * Builds the gjc prompt argv token. Prompts are always written to a private
+ * temp file so they never appear in the process list or get parsed as flags.
+ * Returns the `@file` argv token and the temp file to clean up.
  */
 export function buildPromptArg(message, tmpDir = os.tmpdir()) {
   const promptText = String(message ?? '');
-  if (promptText.startsWith('-')) {
-    const tempFile = path.join(tmpDir, `gjc-prompt-${randomUUID()}.txt`);
-    // 0600: prompts can carry sensitive text and os.tmpdir() is world-readable.
-    writeFileSync(tempFile, promptText, { encoding: 'utf8', mode: 0o600 });
-    return { arg: `@${tempFile}`, tempFile };
+  if (Buffer.byteLength(promptText, 'utf8') > MAX_PROMPT_BYTES) {
+    throw new RangeError(`gjc prompt exceeds the ${MAX_PROMPT_BYTES}-byte limit`);
   }
-  return { arg: promptText, tempFile: null };
+
+  const tempFile = path.join(tmpDir, `gjc-prompt-${randomUUID()}.txt`);
+  // 0600: prompts can carry sensitive text and os.tmpdir() is world-readable.
+  writeFileSync(tempFile, promptText, { encoding: 'utf8', mode: 0o600 });
+  return { arg: `@${tempFile}`, tempFile };
 }
 
 /**
@@ -123,22 +165,26 @@ function stringifyGjcToolOutput(value) {
 
 /**
  * Spawns `gjc -p --mode json` for a single non-interactive run and streams its
- * NDJSON output to the writer as normalized messages.
+ * NDJSON output to the writer as normalized messages. The returned promise
+ * exposes `abortHandle` immediately so new runs can be cancelled before gjc
+ * emits its provider session header.
  *
  * Mirrors spawnOpenCode: same Map-based lifecycle, stdout line buffering,
  * session-created handshake, terminal `complete`, and error handling. The
  * gjc-specific bits are the argv/stdin contract and the NDJSON event mapping.
  */
-async function spawnGjc(message, options = {}, writer) {
-  return new Promise((resolve, reject) => {
+function spawnGjc(message, options = {}, writer) {
+  const processKey = options.sessionId || randomUUID();
+  const runPromise = new Promise((resolve, reject) => {
     const { sessionId, projectPath, cwd, model, sessionDir, sessionSummary } = options;
     const workingDir = cwd || projectPath || process.cwd();
     const resolvedSessionDir = sessionDir || DEFAULT_SESSION_DIR;
-    const processKey = sessionId || Date.now().toString();
 
     let capturedSessionId = sessionId || null;
     let sessionCreatedSent = false;
-    let stdoutLineBuffer = '';
+    let stdoutLineBuffers = [];
+    let stdoutLineBufferLength = 0;
+    let discardingOversizedStdoutLine = false;
     let terminalNotificationSent = false;
     let completeSent = false;
     let gjcProcess = null;
@@ -202,11 +248,8 @@ async function spawnGjc(message, options = {}, writer) {
       }
 
       capturedSessionId = nextSessionId;
-      if (processKey !== capturedSessionId && gjcProcess) {
-        activeGjcProcesses.delete(processKey);
-        activeGjcProcesses.set(capturedSessionId, gjcProcess);
-      }
       if (gjcProcess) {
+        registerGjcProcessAlias(activeGjcProcesses, capturedSessionId, gjcProcess);
         gjcProcess.sessionId = capturedSessionId;
       }
 
@@ -438,6 +481,77 @@ async function spawnGjc(message, options = {}, writer) {
     };
 
     let promptTempFile = null;
+    const cleanupPromptTempFile = () => {
+      if (promptTempFile) {
+        try {
+          unlinkSync(promptTempFile);
+        } catch {
+          // Best-effort cleanup; the OS temp-file cleaner is the last fallback.
+        }
+        promptTempFile = null;
+      }
+    };
+
+    const discardOversizedStdoutLine = () => {
+      stdoutLineBuffers = [];
+      stdoutLineBufferLength = 0;
+      sendNormalized({
+        kind: 'error',
+        content: 'gjc output line exceeded the 32 MB limit and was discarded.',
+      });
+    };
+
+    const flushStdoutLineBuffer = () => {
+      if (discardingOversizedStdoutLine || stdoutLineBufferLength === 0) {
+        stdoutLineBuffers = [];
+        stdoutLineBufferLength = 0;
+        return;
+      }
+
+      const line = Buffer.concat(stdoutLineBuffers, stdoutLineBufferLength).toString('utf8').trim();
+      stdoutLineBuffers = [];
+      stdoutLineBufferLength = 0;
+      processGjcOutputLine(line);
+    };
+
+    const handleStdoutChunk = (data) => {
+      const chunk = Buffer.isBuffer(data) ? data : Buffer.from(data);
+      let offset = 0;
+
+      while (offset < chunk.length) {
+        const newlineIndex = chunk.indexOf(0x0a, offset);
+        const hasNewline = newlineIndex !== -1;
+        const segmentEnd = hasNewline ? newlineIndex : chunk.length;
+        const segment = chunk.subarray(offset, segmentEnd);
+
+        if (discardingOversizedStdoutLine) {
+          if (hasNewline) {
+            discardingOversizedStdoutLine = false;
+          }
+        } else if (stdoutLineBufferLength + segment.length > MAX_NDJSON_LINE_BYTES) {
+          discardOversizedStdoutLine();
+          discardingOversizedStdoutLine = !hasNewline;
+        } else if (hasNewline) {
+          const line = stdoutLineBufferLength === 0
+            ? segment.toString('utf8').trim()
+            : Buffer.concat([...stdoutLineBuffers, segment], stdoutLineBufferLength + segment.length)
+              .toString('utf8')
+              .trim();
+          stdoutLineBuffers = [];
+          stdoutLineBufferLength = 0;
+          processGjcOutputLine(line);
+        } else if (segment.length > 0) {
+          stdoutLineBuffers.push(Buffer.from(segment));
+          stdoutLineBufferLength += segment.length;
+        }
+
+        if (!hasNewline) {
+          return;
+        }
+        offset = newlineIndex + 1;
+      }
+    };
+
     const args = ['-p', '--mode', 'json', '--session-dir', resolvedSessionDir];
     if (sessionId) {
       args.push('-r', sessionId);
@@ -445,38 +559,35 @@ async function spawnGjc(message, options = {}, writer) {
     if (model) {
       args.push('--model', model);
     }
-    // gjc's parser treats a `-`-leading token as a flag; route such prompts through
-    // a temp file via `@file` (see buildPromptArg). Plain messages stay positional.
     const builtPrompt = buildPromptArg(message);
     promptTempFile = builtPrompt.tempFile;
     args.push(builtPrompt.arg);
 
-    gjcProcess = spawnFunction('gjc', args, {
-      cwd: workingDir,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      // GJC_NOTIFICATIONS=0 is an authoritative opt-out for the ephemeral harness.
-      env: { ...process.env, GJC_NOTIFICATIONS: '0' },
-    });
+    try {
+      gjcProcess = spawnFunction('gjc', args, {
+        cwd: workingDir,
+        detached: true,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        // GJC_NOTIFICATIONS=0 is an authoritative opt-out for the ephemeral harness.
+        env: { ...process.env, GJC_NOTIFICATIONS: '0' },
+      });
+    } catch (error) {
+      cleanupPromptTempFile();
+      reject(error);
+      return;
+    }
 
-    activeGjcProcesses.set(processKey, gjcProcess);
+    registerGjcProcessAlias(activeGjcProcesses, processKey, gjcProcess);
     gjcProcess.sessionId = processKey;
 
-    // Prompt is passed as an argv positional (gjc -p ignores piped stdin), so just
-    // close stdin right away so gjc doesn't block waiting on it.
+    // Prompt is passed by `@file` (gjc -p ignores piped stdin), so close stdin
+    // right away so gjc does not block waiting on it.
     if (gjcProcess.stdin) {
       gjcProcess.stdin.on('error', () => {});
       gjcProcess.stdin.end();
     }
 
-    gjcProcess.stdout.on('data', (data) => {
-      stdoutLineBuffer += data.toString();
-      const completeLines = stdoutLineBuffer.split(/\r?\n/);
-      stdoutLineBuffer = completeLines.pop() || '';
-
-      completeLines.forEach((line) => {
-        processGjcOutputLine(line.trim());
-      });
-    });
+    gjcProcess.stdout.on('data', handleStdoutChunk);
 
     gjcProcess.stderr.on('data', (data) => {
       const stderrText = data.toString();
@@ -491,14 +602,10 @@ async function spawnGjc(message, options = {}, writer) {
 
     gjcProcess.on('close', async (code) => {
       const finalSessionId = capturedSessionId || sessionId || processKey;
-      activeGjcProcesses.delete(finalSessionId);
-      activeGjcProcesses.delete(processKey);
-      if (promptTempFile) { try { unlinkSync(promptTempFile); } catch { /* best-effort */ } promptTempFile = null; }
-
-      if (stdoutLineBuffer.trim()) {
-        processGjcOutputLine(stdoutLineBuffer.trim());
-        stdoutLineBuffer = '';
-      }
+      gjcProcess.hasClosed = true;
+      removeGjcProcessAliases(activeGjcProcesses, gjcProcess);
+      cleanupPromptTempFile();
+      flushStdoutLineBuffer();
 
       // Flush any stream left open by an abrupt exit (the terminal complete also
       // finalizes streaming on the client, so this is belt-and-suspenders).
@@ -535,9 +642,7 @@ async function spawnGjc(message, options = {}, writer) {
 
     gjcProcess.on('error', async (error) => {
       const finalSessionId = capturedSessionId || sessionId || processKey;
-      activeGjcProcesses.delete(finalSessionId);
-      activeGjcProcesses.delete(processKey);
-      if (promptTempFile) { try { unlinkSync(promptTempFile); } catch { /* best-effort */ } promptTempFile = null; }
+      cleanupPromptTempFile();
 
       const installed = await providerAuthService.isProviderInstalled(PROVIDER);
       const errorContent = !installed
@@ -558,19 +663,31 @@ async function spawnGjc(message, options = {}, writer) {
       reject(error);
     });
   });
+  return Object.assign(runPromise, { abortHandle: processKey });
 }
 
 function abortGjcSession(sessionId) {
   const gjcProcess = activeGjcProcesses.get(sessionId);
-  if (!gjcProcess) {
+  if (!gjcProcess || gjcProcess.aborted) {
+    return Boolean(gjcProcess?.aborted);
+  }
+
+  if (!signalGjcProcess(gjcProcess, 'SIGTERM')) {
     return false;
   }
 
   // The websocket abort handler sends the terminal complete (aborted: true);
-  // flag the process so its close handler does not emit a second one.
+  // flag the process so its close handler does not emit a second one. Keep all
+  // aliases registered until close so both the run handle and provider id work.
   gjcProcess.aborted = true;
-  gjcProcess.kill('SIGTERM');
-  activeGjcProcesses.delete(sessionId);
+  const escalationTimer = setTimeout(() => {
+    const killed = signalGjcProcess(gjcProcess, 'SIGKILL');
+    if (!killed && !gjcProcess.hasClosed) {
+      console.warn('[gjc] Failed to force-stop aborted process group');
+    }
+  }, ABORT_GRACE_PERIOD_MS);
+  escalationTimer.unref?.();
+
   return true;
 }
 

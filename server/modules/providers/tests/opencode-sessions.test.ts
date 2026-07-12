@@ -283,7 +283,7 @@ test('OpenCode session synchronizer returns the app session id once provider map
     await createOpenCodeDatabase(tempRoot, workspacePath);
     await withIsolatedDatabase(() => {
       sessionsDb.createAppSession('app-session-1', 'opencode', workspacePath);
-      sessionsDb.assignProviderSessionId('app-session-1', 'open-session-1');
+      sessionsDb.assignProviderSessionId('app-session-1', 'opencode', 'open-session-1');
 
       const synchronizer = new OpenCodeSessionSynchronizer();
       return synchronizer.synchronizeFile(path.join(tempRoot, '.local', 'share', 'opencode', 'opencode.db')).then((sessionId) => {
@@ -486,7 +486,7 @@ test('OpenCode synchronizer titles app-created sessions from the first user mess
     });
     await withIsolatedDatabase(async () => {
       sessionsDb.createAppSession('app-1', 'opencode', workspacePath);
-      sessionsDb.assignProviderSessionId('app-1', 'oc-app-1');
+      sessionsDb.assignProviderSessionId('app-1', 'opencode', 'oc-app-1');
 
       await new OpenCodeSessionSynchronizer().synchronize();
 

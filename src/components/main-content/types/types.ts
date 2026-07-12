@@ -43,6 +43,7 @@ export type MainContentProps = {
   selectedSession: ProjectSession | null;
   isSessionReadOnly: boolean;
   liveSessionTmuxName: string | null;
+  liveSessionTmuxId: string | null;
   liveSessionModel: string | null;
   activeTab: AppTab;
   setActiveTab: Dispatch<SetStateAction<AppTab>>;

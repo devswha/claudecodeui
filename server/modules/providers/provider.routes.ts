@@ -615,23 +615,48 @@ router.get(
  * gjc provably runs inside (실사고: patina — cwd-label row killed an unrelated
  * claude tmux). Fail-closed: transient lsof misses deny the action; retrying
  * once detection recovers is the intended UX for a destructive operation.
+ *
+ * `tmuxId` (`$N`, tmux server-unique) is the GENERATION token: when the client
+ * sends the id it observed, a same-named session recreated after that snapshot
+ * fails the match and the action is refused (이름 재사용 race 차단). The tower
+ * still acts by name, so a residual window of one detection→proxy hop remains —
+ * documented, and closable only by a tower-side id-addressed API.
  */
-async function assertLineageTmuxName(tmuxName: string): Promise<void> {
+const TMUX_ID_RE = /^\$\d+$/;
+
+async function assertLineageTmuxTarget(tmuxName: string, tmuxId: string | null): Promise<void> {
   const live = await getLiveGjcSessions();
-  const allowed = live.some((session) => session.tmuxName === tmuxName && session.claim === 'lineage');
-  if (!allowed) {
+  const matches = live.filter((session) => session.tmuxName === tmuxName && session.claim === 'lineage');
+  if (matches.length === 0) {
     throw new AppError('tmux 세션에 대한 조작이 거부되었습니다 — gjc가 그 세션 안에서 실행 중임이 확인될 때만 허용됩니다.', {
       code: 'TMUX_ACTION_NOT_LINEAGE',
       statusCode: 403,
     });
   }
+  if (tmuxId !== null && !matches.some((session) => session.tmuxId === tmuxId)) {
+    throw new AppError('tmux 세션이 그 사이 교체되었습니다 — 같은 이름의 다른 세션입니다. 목록을 새로고침한 뒤 다시 시도하세요.', {
+      code: 'TMUX_GENERATION_MISMATCH',
+      statusCode: 409,
+    });
+  }
+}
+
+/** Optional `$N` generation token from the request body; malformed values are rejected. */
+function readTmuxIdParam(value: unknown): string | null {
+  if (value === undefined || value === null || value === '') {
+    return null;
+  }
+  if (typeof value === 'string' && TMUX_ID_RE.test(value)) {
+    return value;
+  }
+  throw new AppError('tmuxId must look like "$<number>".', { code: 'INVALID_TMUX_ID', statusCode: 400 });
 }
 
 router.post(
   '/sessions/live/send',
   asyncHandler(async (req: Request, res: Response) => {
     // Relay a message into a live tmux gjc session via the control tower's /send.
-    const body = (req.body ?? {}) as { tmuxName?: unknown; message?: unknown };
+    const body = (req.body ?? {}) as { tmuxName?: unknown; tmuxId?: unknown; message?: unknown };
     if (!isValidTmuxName(body.tmuxName)) {
       throw new AppError('A valid tmuxName is required.', { code: 'INVALID_TMUX_NAME', statusCode: 400 });
     }
@@ -639,7 +664,7 @@ router.post(
     if (!message.trim()) {
       throw new AppError('message is required.', { code: 'EMPTY_MESSAGE', statusCode: 400 });
     }
-    await assertLineageTmuxName(body.tmuxName);
+    await assertLineageTmuxTarget(body.tmuxName, readTmuxIdParam(body.tmuxId));
     const result = await sendToLiveSession(body.tmuxName, message);
     res.json(createApiSuccessResponse(result));
   }),
@@ -667,11 +692,11 @@ router.post(
   asyncHandler(async (req: Request, res: Response) => {
     // Kill a live tmux session via the control tower's /kill. The tower is the
     // fleet-lifecycle authority (protected sessions → 403, unknown → 422).
-    const body = (req.body ?? {}) as { tmuxName?: unknown };
+    const body = (req.body ?? {}) as { tmuxName?: unknown; tmuxId?: unknown };
     if (!isValidTmuxName(body.tmuxName)) {
       throw new AppError('A valid tmuxName is required.', { code: 'INVALID_TMUX_NAME', statusCode: 400 });
     }
-    await assertLineageTmuxName(body.tmuxName);
+    await assertLineageTmuxTarget(body.tmuxName, readTmuxIdParam(body.tmuxId));
     const result = await killLiveSession(body.tmuxName);
     res.json(createApiSuccessResponse(result));
   }),

@@ -113,7 +113,7 @@ export class OpenCodeSessionSynchronizer implements IProviderSessionSynchronizer
     }
 
     const fallbackTitle = 'Untitled OpenCode Session';
-    const pendingAppSession = sessionsDb.getSessionByProviderSessionId(sessionId)
+    const pendingAppSession = sessionsDb.getSessionByProviderSessionId(this.provider, sessionId)
       ?? sessionsDb.getSessionById(sessionId)
       ?? sessionsDb.findLatestPendingAppSession(this.provider, projectPath);
     if (pendingAppSession && !pendingAppSession.provider_session_id) {
@@ -121,12 +121,12 @@ export class OpenCodeSessionSynchronizer implements IProviderSessionSynchronizer
       // runtime reports its provider id back through the websocket mapping.
       // Bind that id to the fresh app row first so the watcher does not create
       // a temporary provider-id sidebar entry for the same session.
-      sessionsDb.assignProviderSessionId(pendingAppSession.session_id, sessionId);
+      sessionsDb.assignProviderSessionId(pendingAppSession.session_id, this.provider, sessionId);
     }
 
     // App-created sessions are keyed by an app id, so disk-discovered provider
     // ids must be resolved through the provider-id mapping first.
-    const existingSession = sessionsDb.getSessionByProviderSessionId(sessionId)
+    const existingSession = sessionsDb.getSessionByProviderSessionId(this.provider, sessionId)
       ?? sessionsDb.getSessionById(sessionId);
     const existingName = existingSession?.custom_name;
 
