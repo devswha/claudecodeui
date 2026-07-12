@@ -171,7 +171,15 @@ export function computeLiveSessions(args: {
 
 function runCommand(command: string, cmdArgs: string[], timeoutMs = 4000): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, cmdArgs, { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
+    const child = spawn(command, cmdArgs, {
+      stdio: ['ignore', 'pipe', 'ignore'],
+      windowsHide: true,
+      // Service managers (launchd/systemd) ship no locale. In a non-UTF-8
+      // locale tmux SANITIZES its output — the \t field separators come back
+      // as `_` and non-ASCII paths get escaped — which silently unparses every
+      // pane row (실측 macOS launchd: 모든 세션 tmuxName null). Force UTF-8.
+      env: { ...process.env, LANG: process.env.LANG || 'en_US.UTF-8' },
+    });
     let stdout = '';
     let settled = false;
     const timer = setTimeout(() => {

@@ -159,7 +159,13 @@ export function classifyExternalSessions(args: {
 
 function runCommand(command: string, cmdArgs: string[], timeoutMs = 4000): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, cmdArgs, { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
+    const child = spawn(command, cmdArgs, {
+      stdio: ['ignore', 'pipe', 'ignore'],
+      windowsHide: true,
+      // Service managers ship no locale; non-UTF-8 tmux output sanitizes \t
+      // separators to `_` (see live-sessions.service.ts). Force UTF-8.
+      env: { ...process.env, LANG: process.env.LANG || 'en_US.UTF-8' },
+    });
     let stdout = '';
     let settled = false;
     const timer = setTimeout(() => {
