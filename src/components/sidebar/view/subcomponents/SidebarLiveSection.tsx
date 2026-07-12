@@ -383,7 +383,7 @@ export default function SidebarLiveSection({
                   </span>
                   <span className="truncate pl-[1.375rem] text-[11px] text-muted-foreground">
                     {isIdle
-                      ? '아직 대화가 없습니다 — 웹에서 바로 첫 메시지를 보낼 수 있습니다'
+                      ? '프롬프트 대기 중 — 메시지를 보내면 tmux 세션에 바로 전달됩니다'
                       : '대화 미로딩 — 해당 프로젝트를 열면 제목이 표시됩니다'}
                   </span>
                 </div>

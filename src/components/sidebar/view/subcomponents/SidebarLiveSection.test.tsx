@@ -87,7 +87,7 @@ test('SidebarLiveSection renders idle-gjc rows as 대기 (첫 대화 전 gjc pan
   assert.ok(html.includes('>flask<'), 'labels the row by tmux session name');
   assert.ok(html.includes('대기'), 'idle rows carry the 대기 badge, not LIVE');
   assert.ok(!html.includes('LIVE'), 'no LIVE badge for a session with no transcript');
-  assert.ok(html.includes('아직 대화가 없습니다'), 'explains why it is not openable yet');
+  assert.ok(html.includes('프롬프트 대기 중'), 'explains the row is awaiting input, without claiming no conversation exists');
   assert.ok(html.includes('tmux 세션 flask 닫기'), 'lineage-grade idle rows keep the kill control');
   assert.ok(html.includes('첫 메시지 보내기'), 'lineage-grade idle rows offer the inline first-message composer');
 });
