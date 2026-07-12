@@ -9,8 +9,8 @@ import { sessionConversationsSearchService } from '@/modules/providers/services/
 import { sessionsService } from '@/modules/providers/services/sessions.service.js';
 import { getLiveGjcSessions, IDLE_GJC_ID_PREFIX } from '@/modules/providers/services/live-sessions.service.js';
 import { getExternalCliSessions } from '@/modules/providers/services/external-cli-sessions.service.js';
-import { getHomeDir, getHomeDirSuggestions } from '@/modules/providers/services/home-dirs.service.js';
-import { isValidTmuxName, sendToLiveSession, isValidSpawnName, spawnLiveSession, killLiveSession } from '@/modules/providers/services/live-send.service.js';
+import { getHomeDir, getHomeDirSuggestions, getSpawnDirSuggestions } from '@/modules/providers/services/home-dirs.service.js';
+import { isValidTmuxName, sendToLiveSession, isValidSpawnName, spawnLiveSession, killLiveSession, answerLiveSession } from '@/modules/providers/services/live-send.service.js';
 import type {
   LLMProvider,
   McpScope,
@@ -600,10 +600,14 @@ router.get(
 router.get(
   '/fs/dir-suggestions',
   asyncHandler(async (req: Request, res: Response) => {
-    // Home-relative directory autocomplete (spawn form cwd + files panel root).
-    // Read-only readdir under $HOME, traversal-guarded in the service.
+    // Directory autocomplete. Default scope stays $HOME-relative (files panel
+    // joins home + suggestion, so extra roots would break it); scope=spawn adds
+    // the tower's TOWER_ALLOWED_ROOTS children first — the strings it returns
+    // are exactly what the tower's /spawn cwd resolution accepts.
     const prefix = typeof req.query.prefix === 'string' ? req.query.prefix : '';
-    const suggestions = await getHomeDirSuggestions(prefix);
+    const suggestions = req.query.scope === 'spawn'
+      ? await getSpawnDirSuggestions(prefix)
+      : await getHomeDirSuggestions(prefix);
     res.json(createApiSuccessResponse({ home: getHomeDir(), suggestions }));
   }),
 );
@@ -624,7 +628,7 @@ router.get(
  */
 const TMUX_ID_RE = /^\$\d+$/;
 
-async function assertLineageTmuxTarget(tmuxName: string, tmuxId: string | null): Promise<void> {
+async function assertLineageTmuxTarget(tmuxName: string, tmuxId: string): Promise<void> {
   const live = await getLiveGjcSessions();
   const matches = live.filter((session) => session.tmuxName === tmuxName && session.claim === 'lineage');
   if (matches.length === 0) {
@@ -633,7 +637,7 @@ async function assertLineageTmuxTarget(tmuxName: string, tmuxId: string | null):
       statusCode: 403,
     });
   }
-  if (tmuxId !== null && !matches.some((session) => session.tmuxId === tmuxId)) {
+  if (!matches.some((session) => session.tmuxId === tmuxId)) {
     throw new AppError('tmux 세션이 그 사이 교체되었습니다 — 같은 이름의 다른 세션입니다. 목록을 새로고침한 뒤 다시 시도하세요.', {
       code: 'TMUX_GENERATION_MISMATCH',
       statusCode: 409,
@@ -641,15 +645,17 @@ async function assertLineageTmuxTarget(tmuxName: string, tmuxId: string | null):
   }
 }
 
-/** Optional `$N` generation token from the request body; malformed values are rejected. */
-function readTmuxIdParam(value: unknown): string | null {
-  if (value === undefined || value === null || value === '') {
-    return null;
-  }
+/**
+ * REQUIRED `$N` generation token from the request body. A missing token is a
+ * 400, not a skipped check — otherwise any authenticated caller could omit it
+ * and bypass the same-name replacement guard entirely (리뷰 HIGH: fail-closed
+ * means the generation comparison must be unavoidable).
+ */
+function readTmuxIdParam(value: unknown): string {
   if (typeof value === 'string' && TMUX_ID_RE.test(value)) {
     return value;
   }
-  throw new AppError('tmuxId must look like "$<number>".', { code: 'INVALID_TMUX_ID', statusCode: 400 });
+  throw new AppError('tmuxId is required and must look like "$<number>".', { code: 'INVALID_TMUX_ID', statusCode: 400 });
 }
 
 router.post(
@@ -698,6 +704,27 @@ router.post(
     }
     await assertLineageTmuxTarget(body.tmuxName, readTmuxIdParam(body.tmuxId));
     const result = await killLiveSession(body.tmuxName);
+    res.json(createApiSuccessResponse(result));
+  }),
+);
+
+router.post(
+  '/sessions/live/answer',
+  asyncHandler(async (req: Request, res: Response) => {
+    // Answer a live session's ask-TUI menu: the tower navigates to the exact
+    // option label and commits only after verifying the cursor row. Same
+    // lineage + generation-token gate as send/kill — a stale UI must not drive
+    // keystrokes into a same-named session that replaced the one it saw.
+    const body = (req.body ?? {}) as { tmuxName?: unknown; tmuxId?: unknown; label?: unknown };
+    if (!isValidTmuxName(body.tmuxName)) {
+      throw new AppError('A valid tmuxName is required.', { code: 'INVALID_TMUX_NAME', statusCode: 400 });
+    }
+    const label = typeof body.label === 'string' ? body.label : '';
+    if (!label.trim()) {
+      throw new AppError('label is required.', { code: 'EMPTY_LABEL', statusCode: 400 });
+    }
+    await assertLineageTmuxTarget(body.tmuxName, readTmuxIdParam(body.tmuxId));
+    const result = await answerLiveSession(body.tmuxName, label);
     res.json(createApiSuccessResponse(result));
   }),
 );

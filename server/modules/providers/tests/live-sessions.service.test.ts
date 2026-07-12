@@ -2,15 +2,21 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  buildPidChain,
   computeLiveSessions,
+  expandProcessDescendants,
   extractSessionPathsFromLsof,
   findIdleGjcTmuxSessions,
   IDLE_GJC_ID_PREFIX,
+  parseCwdByPidFromLsof,
   parseLastModelChange,
   parseLsofPidSessions,
+  parsePidParents,
+  parsePsProcessRecords,
   parseTmuxPanes,
   tmuxHasPanes,
 } from '@/modules/providers/services/live-sessions.service.js';
+import { gjcPidsFromProcessRecords } from '@/modules/providers/services/external-cli-sessions.service.js';
 
 test('tmuxHasPanes detects a running tmux server (>=1 pane line)', () => {
   assert.equal(tmuxHasPanes('omg\t111\t/home/u/workspace/oh-my-gjc\n'), true);
@@ -38,6 +44,64 @@ test('parseLsofPidSessions pairs uuid with holder pid, path-agnostic (decoy-HOME
   assert.deepEqual(parseLsofPidSessions(lsof), [
     { id: '019f469d-e1d1-7000-a9aa-a942784b0e2b', pid: 3304033 },
     { id: '019f46ad-51d2-7000-a5ea-facfd7f23f52', pid: 3436470 },
+  ]);
+});
+
+test('parsePidParents parses headerless `ps -eo pid=,ppid=` output (BSD right-aligned padding)', () => {
+  // macOS(BSD) ps pads columns with leading spaces; Linux(procps) output parses identically.
+  const parents = parsePidParents('    1     0\n89726 89725\n93770 93769\n\nnot a row\n');
+  assert.deepEqual([...parents], [[1, 0], [89726, 89725], [93770, 93769]]);
+});
+test('parsePsProcessRecords preserves args with spaces from one ps snapshot', () => {
+  const records = parsePsProcessRecords([
+    '  100     1 bun /Volumes/Data/Dev Workspace/tools/gjc.js --flag',
+    '  101   100 node /opt/worker.js',
+    'malformed row',
+  ].join('\n'));
+
+  assert.deepEqual(records, [
+    { pid: 100, ppid: 1, args: 'bun /Volumes/Data/Dev Workspace/tools/gjc.js --flag' },
+    { pid: 101, ppid: 100, args: 'node /opt/worker.js' },
+  ]);
+});
+
+test('expandProcessDescendants includes every child level and stops at ppid cycles', () => {
+  const descendants = expandProcessDescendants(new Set([10, 20]), [
+    { pid: 10, ppid: 1 },
+    { pid: 11, ppid: 10 },
+    { pid: 12, ppid: 11 },
+    { pid: 13, ppid: 10 },
+    { pid: 20, ppid: 21 },
+    { pid: 21, ppid: 20 },
+  ]);
+
+  assert.deepEqual([...descendants], [10, 20, 11, 13, 21, 12]);
+});
+
+test('buildPidChain walks [pid, ppid, …] toward init from a ps snapshot', () => {
+  // 실측 macOS shape: bun(gjc) → zsh -c wrapper → tmux pane pid.
+  const parents = new Map([[93770, 93769], [93769, 93768], [93768, 1]]);
+  assert.deepEqual(buildPidChain(93770, parents), [93770, 93769, 93768]);
+  // unknown pid: chain is just the pid itself (lineage miss, not a crash)
+  assert.deepEqual(buildPidChain(555, new Map()), [555]);
+});
+
+test('buildPidChain is cycle-guarded (corrupt/racing ps snapshot cannot loop)', () => {
+  const parents = new Map([[10, 20], [20, 10]]);
+  assert.deepEqual(buildPidChain(10, parents), [10, 20]);
+});
+
+test('parseCwdByPidFromLsof maps pid → cwd (first path wins, spaces preserved)', () => {
+  const lsof = [
+    'p31394',
+    'n/Volumes/Data/Dev Workspace/lazy-dev-cli',
+    'p89726',
+    'n/tmp',
+    'nphantom-second-path',
+  ].join('\n');
+  assert.deepEqual([...parseCwdByPidFromLsof(lsof)], [
+    [31394, '/Volumes/Data/Dev Workspace/lazy-dev-cli'],
+    [89726, '/tmp'],
   ]);
 });
 
@@ -290,4 +354,36 @@ test('IDLE_GJC_ID_PREFIX cannot collide with transcript uuids (client contract)'
   // uuid-ish token and can never start with it.
   assert.equal(IDLE_GJC_ID_PREFIX, 'idle-gjc:');
   assert.ok(!/^[0-9a-fA-F-]+$/.test(IDLE_GJC_ID_PREFIX));
+});
+
+test('findIdleGjcTmuxSessions: bun-wrapped gjc pane은 gjcPids 증거로 idle 행이 된다 (macOS 실측)', () => {
+  const result = findIdleGjcTmuxSessions({
+    panes: [
+      { name: 'test', sid: '$7', pid: 27614 },
+      { name: 'plain-shell', sid: '$8', pid: 30000 },
+    ],
+    procs: [
+      { pid: 27614, ppid: 1, comm: 'sh' },
+      { pid: 27615, ppid: 27614, comm: 'bun' }, // gjc via bun — comm 'gjc' 절대 안 됨
+      { pid: 30000, ppid: 1, comm: 'zsh' },
+    ],
+    gjcPids: new Set([27615]),
+    excludedNames: new Set(),
+  });
+  assert.deepEqual(result, [{ name: 'test', sid: '$7' }]);
+});
+
+test('shared ps snapshot wiring: 3-column records feed gjc evidence correctly (감지 전멸 회귀 방지)', () => {
+  // Shape of the ONE `ps -eo pid=,ppid=,args=` snapshot the scan uses. Feeding
+  // this raw output into the 2-column parser made argv[0] the ppid digits and
+  // silently zeroed all detection — the exact regression this test pins.
+  const snapshot = [
+    ' 89726 89725 bun /Users/dev/.bun/bin/gjc',
+    ' 12001     1 vim /tmp/gjc',
+    ' 12002     1 node /opt/other/tool.js',
+    ' 12003 89726 bun /Volumes/Data/Dev Workspace/tools/gjc.js',
+  ].join('\n');
+  const records = parsePsProcessRecords(snapshot);
+  const pids = gjcPidsFromProcessRecords(records);
+  assert.deepEqual([...pids].sort((a, b) => a - b), [89726, 12003].sort((a, b) => a - b));
 });

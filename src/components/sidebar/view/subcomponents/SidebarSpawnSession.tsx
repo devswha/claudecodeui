@@ -3,12 +3,15 @@ import { Plus } from 'lucide-react';
 
 import { api } from '../../../../utils/api';
 import HomeDirInput from '../../../../shared/view/HomeDirInput';
+import { SPAWN_NAME_RE } from '../../../../shared/tmuxSessionName';
 
 type SpawnStatus =
   | { kind: 'idle' }
   | { kind: 'spawning' }
-  | { kind: 'ok'; text: string }
   | { kind: 'error'; text: string };
+// The tower's English 400 ("invalid session name") becomes this actionable
+// Korean message, checked client-side before any request (rule: SPAWN_NAME_RE).
+const NAME_RULE_TEXT = '이름은 영문·숫자로 시작, 영문·숫자·. _ - 만 (공백·/ 불가)';
 
 // A new gjc session is created through the control tower's /spawn (proxied by the
 // server). The tower validates the name + cwd and boots the tmux session; the live
@@ -32,6 +35,10 @@ export default function SidebarSpawnSession() {
     if (!trimmedName || !trimmedCwd || status.kind === 'spawning') {
       return;
     }
+    if (!SPAWN_NAME_RE.test(trimmedName)) {
+      setStatus({ kind: 'error', text: NAME_RULE_TEXT });
+      return;
+    }
     setStatus({ kind: 'spawning' });
     try {
       const response = await api.liveSessionSpawn(trimmedName, trimmedCwd);
@@ -49,13 +56,14 @@ export default function SidebarSpawnSession() {
         reset();
         return;
       }
+      const rawError = (typeof body?.error === 'string' && body.error) || data.detail || '';
       const text = data.reachable === false
         ? '관제탑 미가동 — 생성 불가'
         : data.conflict
           ? '같은 이름의 세션이 이미 있습니다'
-          : (typeof body?.error === 'string' && body.error)
-            || data.detail
-            || '세션 생성 실패';
+          : rawError.includes('invalid session name')
+            ? NAME_RULE_TEXT
+            : rawError || '세션 생성 실패';
       setStatus({ kind: 'error', text });
     } catch {
       setStatus({ kind: 'error', text: '세션 생성 실패' });
@@ -88,10 +96,11 @@ export default function SidebarSpawnSession() {
         value={cwd}
         onChange={setCwd}
         onSubmit={() => void spawn()}
-        placeholder="작업 폴더 (홈 하위, 예: workspace/my-proj)"
+        placeholder="작업 폴더 (예: aegis-alpha, workspace/my-proj)"
+        scope="spawn"
       />
-      {status.kind !== 'idle' && status.kind !== 'spawning' && (
-        <p className={status.kind === 'error' ? 'text-[11px] text-red-500' : 'text-[11px] text-blue-600 dark:text-blue-400'}>
+      {status.kind === 'error' && (
+        <p className="text-[11px] text-red-500">
           {status.text}
         </p>
       )}

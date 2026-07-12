@@ -8,6 +8,8 @@ type HomeDirInputProps = {
   onSubmit?: () => void;
   placeholder?: string;
   className?: string;
+  /** 'spawn' merges the tower's allowed spawn roots (workspace-first). */
+  scope?: 'home' | 'spawn';
 };
 
 const DEBOUNCE_MS = 200;
@@ -18,7 +20,7 @@ const DEBOUNCE_MS = 200;
  * click or Tab (first match) completes. Best-effort — endpoint errors just
  * hide the dropdown.
  */
-export default function HomeDirInput({ value, onChange, onSubmit, placeholder, className }: HomeDirInputProps) {
+export default function HomeDirInput({ value, onChange, onSubmit, placeholder, className, scope = 'home' }: HomeDirInputProps) {
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [open, setOpen] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -28,15 +30,27 @@ export default function HomeDirInput({ value, onChange, onSubmit, placeholder, c
     if (debounceRef.current) {
       clearTimeout(debounceRef.current);
     }
-    if (!value.trim()) {
+    // An empty spawn input still fetches: the dropdown then doubles as a
+    // "pick a project" default list (workspace roots first). The home scope
+    // keeps its old behavior — no dropdown until something is typed.
+    if (!value.trim() && scope !== 'spawn') {
+      // Invalidate any in-flight request too — a slow response must not
+      // repopulate suggestions after the input was cleared (리뷰 반영).
+      requestSeqRef.current += 1;
       setSuggestions([]);
       return undefined;
     }
     const seq = ++requestSeqRef.current;
     debounceRef.current = setTimeout(async () => {
       try {
-        const response = await api.dirSuggestions(value.trim());
-        if (!response.ok) return;
+        const response = await api.dirSuggestions(value.trim(), scope === 'spawn' ? 'spawn' : null);
+        if (seq !== requestSeqRef.current) {
+          return;
+        }
+        if (!response.ok) {
+          setSuggestions([]);
+          return;
+        }
         const body = await response.json();
         const list: string[] = body?.data?.suggestions ?? [];
         if (seq === requestSeqRef.current) {
@@ -44,7 +58,10 @@ export default function HomeDirInput({ value, onChange, onSubmit, placeholder, c
           setSuggestions(list.filter((entry) => entry !== value.trim()));
         }
       } catch {
-        // best-effort
+        // Best-effort, but never leave stale entries behind a failed fetch.
+        if (seq === requestSeqRef.current) {
+          setSuggestions([]);
+        }
       }
     }, DEBOUNCE_MS);
     return () => {
@@ -52,7 +69,7 @@ export default function HomeDirInput({ value, onChange, onSubmit, placeholder, c
         clearTimeout(debounceRef.current);
       }
     };
-  }, [value]);
+  }, [value, scope]);
 
   const pick = (suggestion: string) => {
     onChange(`${suggestion}/`);

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm, symlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, realpath, rm, symlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -7,6 +7,8 @@ import test from 'node:test';
 import {
   filterDirSuggestions,
   getHomeDirSuggestions,
+  getSpawnDirSuggestions,
+  parseExtraSpawnRoots,
   splitPrefix,
 } from '@/modules/providers/services/home-dirs.service.js';
 
@@ -59,5 +61,59 @@ test('getHomeDirSuggestions: realpath containment — deep symlink escape return
   } finally {
     await rm(home, { recursive: true, force: true });
     await rm(outside, { recursive: true, force: true });
+  }
+});
+
+test('parseExtraSpawnRoots keeps only absolute csv entries', () => {
+  assert.deepEqual(parseExtraSpawnRoots(undefined), []);
+  assert.deepEqual(parseExtraSpawnRoots(' /Volumes/Data/Dev Workspace , relative/path , '), ['/Volumes/Data/Dev Workspace']);
+});
+
+test('getSpawnDirSuggestions: workspace entries are uniformly root-alias prefixed; home stays relative', async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), 'spawn-home-'));
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'spawn root-'))); // space: 실제 워크스페이스 경로 형태
+  try {
+    await mkdir(path.join(home, 'zeta'));
+    await mkdir(path.join(home, 'shared'));
+    await mkdir(path.join(root, 'aegis-alpha'));
+    await mkdir(path.join(root, 'shared'));
+    await mkdir(path.join(root, 'aegis-alpha', 'sub'));
+
+    const alias = path.basename(root);
+    // Empty prefix = default list: workspace children first, ALL in the
+    // uniform "<root basename>/<name>" shape (one consistent form — mixing
+    // bare and prefixed entries confused the picker), then home's relative
+    // names. The 'shared' collision is naturally unambiguous this way.
+    assert.deepEqual(
+      await getSpawnDirSuggestions('', home, [root]),
+      [`${alias}/aegis-alpha`, `${alias}/shared`, 'shared', 'zeta'],
+    );
+    // Fragment matching hits the workspace root even when home has no match.
+    assert.deepEqual(await getSpawnDirSuggestions('aeg', home, [root]), [`${alias}/aegis-alpha`]);
+    // Typing the alias itself offers the root as a completion step.
+    assert.deepEqual(
+      await getSpawnDirSuggestions(alias.slice(0, 3), home, [root]),
+      [alias],
+    );
+    // Continued typing in the alias form lists that root's children.
+    assert.deepEqual(
+      await getSpawnDirSuggestions(`${alias}/aegis-alpha/`, home, [root]),
+      [`${alias}/aegis-alpha/sub`],
+    );
+    // Absolute prefixes still work and stay contained to the roots.
+    assert.deepEqual(
+      await getSpawnDirSuggestions(`${path.join(root, 'aegis-alpha')}/`, home, [root]),
+      [path.join(root, 'aegis-alpha', 'sub')],
+    );
+    // Absolute prefixes outside every allowed root return nothing.
+    assert.deepEqual(await getSpawnDirSuggestions('/etc/', home, [root]), []);
+    // Traversal is rejected in both forms (lexical guard inside the base).
+    assert.deepEqual(await getSpawnDirSuggestions('../x', home, [root]), []);
+    assert.deepEqual(await getSpawnDirSuggestions(`${root}/../etc/`, home, [root]), []);
+    // A missing extra root degrades to home-only.
+    assert.deepEqual(await getSpawnDirSuggestions('sh', home, [path.join(root, 'nope')]), ['shared']);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
   }
 });

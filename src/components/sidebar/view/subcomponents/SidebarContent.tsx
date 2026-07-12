@@ -3,7 +3,7 @@ import { Activity, Archive, Folder, MessageSquare, RotateCcw, Search, Trash2 } f
 import type { TFunction } from 'i18next';
 
 import { ScrollArea } from '../../../../shared/view/ui';
-import type { ExternalTerminalTarget, Project } from '../../../../types/app';
+import type { ExternalTerminalTarget, IdleGjcTarget, Project } from '../../../../types/app';
 import type { ReleaseInfo } from '../../../../types/sharedTypes';
 import type { ConversationSearchResults, SearchProgress } from '../../hooks/useSidebarController';
 import type { ArchivedProjectListItem, ArchivedSessionListItem, SidebarSearchMode } from '../../types/types';
@@ -156,6 +156,7 @@ type SidebarContentProps = {
   liveSessionLineage: ReadonlySet<string>;
   liveSessionTmuxIds: ReadonlyMap<string, string>;
   onExternalTerminalOpen: (target: ExternalTerminalTarget) => void;
+  onIdleSessionOpen: (target: IdleGjcTarget) => void;
   t: TFunction;
 };
 
@@ -198,6 +199,7 @@ export default function SidebarContent({
   liveSessionLineage,
   liveSessionTmuxIds,
   onExternalTerminalOpen,
+  onIdleSessionOpen,
   t,
 }: SidebarContentProps) {
   const [topTab, setTopTab] = useState<'live' | 'external' | 'archive'>('live');
@@ -291,6 +293,7 @@ export default function SidebarContent({
               liveSessionNames={liveSessionNames}
               liveSessionLineage={liveSessionLineage}
               liveSessionTmuxIds={liveSessionTmuxIds}
+              onIdleSessionOpen={onIdleSessionOpen}
             />
           )}
         </ScrollArea>

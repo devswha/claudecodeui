@@ -12,7 +12,9 @@ import { useSessionProtection } from '../../hooks/useSessionProtection';
 import { useProjectsState } from '../../hooks/useProjectsState';
 import { useQueuedMessageAutoSend } from '../../hooks/useQueuedMessageAutoSend';
 import { api } from '../../utils/api';
-import type { ExternalTerminalTarget } from '../../types/app';
+import type { ExternalTerminalTarget, IdleGjcTarget, MainTakeover } from '../../types/app';
+
+import { computeIdleStep, nextResolvingOnStep, type ResolvingState } from './idleTransition';
 
 type RunningSessionApiItem = {
   sessionId?: unknown;
@@ -63,6 +65,7 @@ function AppContentInner() {
   } = useSessionProtection();
 
   const {
+    projects,
     selectedProject,
     selectedSession,
     liveSessionModels,
@@ -87,39 +90,56 @@ function AppContentInner() {
     activeSessions: processingSessions,
   });
 
-  // External CLI (claude/codex) tmux terminal shown in the main area. Lives
-  // here (not in useProjectsState) so the gjc session flow stays untouched;
-  // selecting any project/session or starting a new chat clears it via the
-  // wrapped sidebar handlers below.
-  const [externalTerminal, setExternalTerminal] = useState<ExternalTerminalTarget | null>(null);
+  // Main-area takeovers are mutually exclusive. This stays outside
+  // useProjectsState so normal gjc route selection remains unchanged.
+  const [takeover, setTakeover] = useState<MainTakeover>(null);
+  const [resolving, setResolving] = useState<ResolvingState | null>(null);
+  const [idleAmbiguous, setIdleAmbiguous] = useState(false);
+  const externalTerminal = takeover?.kind === 'external' ? takeover.target : null;
+  const idleTarget = takeover?.kind === 'idle-gjc' ? takeover.target : null;
+  const resolvingTargetId = resolving?.targetId;
+  const resolvingStartedAt = resolving?.startedAt;
+  const resolvingTimedOut = resolving?.timedOut ?? false;
+
+  const reset = useCallback(() => {
+    setTakeover(null);
+    setResolving(null);
+    setIdleAmbiguous(false);
+  }, []);
 
   const openExternalTerminal = useCallback((target: ExternalTerminalTarget) => {
-    setExternalTerminal(target);
+    setTakeover({ kind: 'external', target });
+    setResolving(null);
+    setIdleAmbiguous(false);
     setSidebarOpen(false);
   }, [setSidebarOpen]);
 
-  const closeExternalTerminal = useCallback(() => {
-    setExternalTerminal(null);
-  }, []);
+  const openIdleTarget = useCallback((target: IdleGjcTarget) => {
+    setTakeover({ kind: 'idle-gjc', target });
+    setResolving(null);
+    setIdleAmbiguous(false);
+    setSidebarOpen(false);
+  }, [setSidebarOpen]);
 
   // Wrap navigation-ish sidebar handlers so leaving for a session/project/new
-  // chat drops the terminal takeover — without modifying the originals.
+  // chat drops any main-area takeover — without modifying the originals.
   const sidebarProps = useMemo(() => ({
     ...sidebarSharedProps,
     onProjectSelect: (...args: Parameters<typeof sidebarSharedProps.onProjectSelect>) => {
-      setExternalTerminal(null);
+      reset();
       return sidebarSharedProps.onProjectSelect(...args);
     },
     onSessionSelect: (...args: Parameters<typeof sidebarSharedProps.onSessionSelect>) => {
-      setExternalTerminal(null);
+      reset();
       return sidebarSharedProps.onSessionSelect(...args);
     },
     onNewSession: (...args: Parameters<typeof sidebarSharedProps.onNewSession>) => {
-      setExternalTerminal(null);
+      reset();
       return sidebarSharedProps.onNewSession(...args);
     },
     onExternalTerminalOpen: openExternalTerminal,
-  }), [sidebarSharedProps, openExternalTerminal]);
+    onIdleSessionOpen: openIdleTarget,
+  }), [sidebarSharedProps, reset, openExternalTerminal, openIdleTarget]);
 
   // Queued messages for sessions that finish while another session (or none)
   // is being viewed are sent from here; the viewed session's composer handles
@@ -181,6 +201,79 @@ function AppContentInner() {
     openSettings,
     refreshProjects: refreshProjectsSilently,
   });
+  useEffect(() => {
+    reset();
+  }, [reset, sessionId]);
+
+  useEffect(() => {
+    if (!idleTarget) {
+      return;
+    }
+
+    const ownerLoaded = (targetId: string) => projects.some(
+      (project) => project.sessions?.some((session) => session.id === targetId),
+    );
+    const step = computeIdleStep(
+      idleTarget,
+      sidebarSharedProps.liveSessionNames,
+      sidebarSharedProps.liveSessionLineage,
+      sidebarSharedProps.liveSessionTmuxIds,
+      ownerLoaded,
+    );
+
+    switch (step.type) {
+      case 'invalidate':
+        reset();
+        return;
+      case 'idle':
+        setResolving(null);
+        setIdleAmbiguous(false);
+        return;
+      case 'ambiguous':
+        setResolving(null);
+        setIdleAmbiguous(true);
+        return;
+      case 'resolving':
+        setIdleAmbiguous(false);
+        setResolving((current) => nextResolvingOnStep(current, step));
+        // timeout bounds background refresh work, not recovery navigation.
+        if (!resolvingTimedOut) {
+          void refreshProjectsSilently();
+        }
+        return;
+      case 'navigate':
+        reset();
+        navigate(`/session/${step.targetId}`);
+        return;
+    }
+  }, [
+    idleTarget,
+    navigate,
+    projects,
+    refreshProjectsSilently,
+    reset,
+    resolvingTimedOut,
+    sidebarSharedProps.liveSessionLineage,
+    sidebarSharedProps.liveSessionNames,
+    sidebarSharedProps.liveSessionTmuxIds,
+  ]);
+
+  useEffect(() => {
+    if (!resolvingTargetId || resolvingTimedOut) {
+      return undefined;
+    }
+
+    const timeout = window.setTimeout(() => {
+      setResolving((current) => (
+        current && current.targetId === resolvingTargetId
+          ? { ...current, timedOut: true }
+          : current
+      ));
+    }, 15_000);
+
+    return () => window.clearTimeout(timeout);
+  }, [resolvingStartedAt, resolvingTargetId, resolvingTimedOut]);
+
 
   useEffect(() => {
     if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) {
@@ -197,7 +290,7 @@ function AppContentInner() {
         localStorage.setItem('selected-provider', message.provider);
       }
 
-      setExternalTerminal(null);
+      reset();
       setActiveTab('chat');
       setSidebarOpen(false);
       void refreshProjectsSilently();
@@ -215,7 +308,7 @@ function AppContentInner() {
     return () => {
       navigator.serviceWorker.removeEventListener('message', handleServiceWorkerMessage);
     };
-  }, [navigate, refreshProjectsSilently, setActiveTab, setSidebarOpen]);
+  }, [navigate, refreshProjectsSilently, reset, setActiveTab, setSidebarOpen]);
 
   // Pending tool permissions are recovered through the `chat.subscribe` flow:
   // the `chat_subscribed` ack carries them on session open and on reconnect,
@@ -315,19 +408,23 @@ function AppContentInner() {
           externalMessageUpdate={externalMessageUpdate}
           newSessionTrigger={newSessionTrigger}
           externalTerminal={externalTerminal}
-          onExternalTerminalClose={closeExternalTerminal}
+          onExternalTerminalClose={reset}
+          idleTarget={idleTarget}
+          onIdleClose={reset}
+          resolvingTimedOut={resolvingTimedOut}
+          idleAmbiguous={idleAmbiguous}
         />
       </div>
 
       <CommandPalette
         selectedProject={selectedProject}
         onStartNewChat={(...args: Parameters<typeof handleNewSession>) => {
-          setExternalTerminal(null);
+          reset();
           return handleNewSession(...args);
         }}
         onOpenSettings={() => openSettings()}
         onShowTab={(tab: Parameters<typeof setActiveTab>[0]) => {
-          setExternalTerminal(null);
+          reset();
           setActiveTab(tab);
         }}
       />

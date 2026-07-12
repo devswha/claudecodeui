@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 
-import type { Project, ProjectSession } from '../../../../types/app';
+import type { IdleGjcTarget, Project, ProjectSession } from '../../../../types/app';
 import { cn } from '../../../../lib/utils';
 import { api } from '../../../../utils/api';
 import { getAllSessions, getSessionTime } from '../../utils/utils';
+import { buildIdleTarget } from '../../../app/idleTransition';
 
 import type { SidebarProjectListProps } from './SidebarProjectList';
 
@@ -21,6 +22,7 @@ type SidebarLiveSectionProps = {
   liveSessionTmuxIds: ReadonlyMap<string, string>;
   selectedSession: ProjectSession | null;
   onSessionSelect: SidebarProjectListProps['onSessionSelect'];
+  onIdleSessionOpen: (target: IdleGjcTarget) => void;
 };
 
 /** Per-row kill flow state (2-step confirm before the tower is asked to kill). */
@@ -63,6 +65,7 @@ export default function SidebarLiveSection({
   liveSessionTmuxIds,
   selectedSession,
   onSessionSelect,
+  onIdleSessionOpen,
 }: SidebarLiveSectionProps) {
   // Session ids killed in this component instance — hidden immediately; the 5s
   // live poll is the source of truth and will drop them for real.
@@ -88,19 +91,28 @@ export default function SidebarLiveSection({
     return null;
   }
 
+  // This tab is a TMUX fleet roster: sessions with no tmux name (a gjc running
+  // in a plain terminal — Orca, mosh, bare zsh) are pure noise here since the
+  // web can neither relay nor kill them. They stay in liveSessionIds so the
+  // read-only banner and LIVE badges elsewhere keep protecting their
+  // transcripts; they are only hidden from this list (사용자 결정).
   const rows = projects.flatMap((project) =>
     getAllSessions(project)
-      .filter((session) => liveSessionIds.has(session.id) && !killedIds.has(session.id))
+      .filter((session) => liveSessionIds.has(session.id)
+        && liveSessionNames.has(session.id)
+        && !killedIds.has(session.id))
       .map((session) => ({ project, session })),
   );
 
   // Live ids whose session isn't in any *loaded* project page (pagination) still
   // deserve a row — otherwise whole live sessions silently vanish from the tab
   // (하코 관찰: horcrux/patina 라이브가 안 보임). They render with the tmux name
-  // (or a placeholder) and keep the kill control; selection needs the loaded
-  // session object, so they are not clickable until the session list loads them.
+  // and keep the kill control; selection needs the loaded session object, so
+  // they are not clickable until the session list loads them.
   const matchedIds = new Set(rows.map(({ session }) => session.id));
-  const orphans = [...liveSessionIds].filter((id) => !matchedIds.has(id) && !killedIds.has(id));
+  const orphans = [...liveSessionIds].filter((id) => !matchedIds.has(id)
+    && liveSessionNames.has(id)
+    && !killedIds.has(id));
 
   if (rows.length === 0 && orphans.length === 0) {
     return null;
@@ -120,9 +132,16 @@ export default function SidebarLiveSection({
   };
 
   const kill = async (sessionId: string, tmuxName: string) => {
+    // The server requires the $N generation token (fail-closed). Without one
+    // we cannot prove WHICH same-named session would die — refuse locally.
+    const tmuxId = liveSessionTmuxIds.get(sessionId) ?? null;
+    if (!tmuxId) {
+      setStatusOf(sessionId, { kind: 'error', text: '세션 세대 정보 미확인 — 목록 갱신 후 다시 시도' });
+      return;
+    }
     setStatusOf(sessionId, { kind: 'killing' });
     try {
-      const response = await api.liveSessionKill(tmuxName, liveSessionTmuxIds.get(sessionId) ?? null);
+      const response = await api.liveSessionKill(tmuxName, tmuxId);
       const body = await response.json().catch(() => null);
       const data = (body?.data ?? body ?? {}) as {
         ok?: boolean;
@@ -217,6 +236,7 @@ export default function SidebarLiveSection({
         {rows.map(({ project, session }) => {
           const isSelected = selectedSession?.id === session.id;
           const title = session.summary || session.name || 'Session';
+          // rows filter guarantees a tmux name; title is demoted to the tooltip.
           const tmuxName = liveSessionNames.get(session.id);
           const primary = tmuxName ?? title;
           const age = formatAge(getSessionTime(session));
@@ -254,33 +274,54 @@ export default function SidebarLiveSection({
         })}
         {orphans.map((id) => {
           const tmuxName = liveSessionNames.get(id);
+          if (!tmuxName) {
+            return null; // orphans filter guarantees a name; TS narrowing only
+          }
           // Server-synthetic row: a gjc TUI runs in this tmux session but has no
           // transcript yet (gjc creates it at the FIRST message) — waiting, not live.
           const isIdle = id.startsWith('idle-gjc:');
+          const idleTarget = isIdle
+            ? buildIdleTarget(id, liveSessionNames, liveSessionLineage, liveSessionTmuxIds)
+            : null;
+          // Row = badge + name only. Explanations live in the tooltip — a
+          // per-row subtitle repeated N times is scaffolding noise, not data.
+          const rowContent = (
+            <span className="flex items-center gap-2">
+              <span
+                className={`inline-flex h-1.5 w-1.5 shrink-0 rounded-full ${isIdle ? 'bg-muted-foreground/50' : 'animate-pulse bg-blue-500'}`}
+                aria-hidden
+              />
+              <span
+                className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold ${isIdle ? 'bg-muted text-muted-foreground' : 'bg-blue-500/15 text-blue-600 dark:text-blue-400'}`}
+              >
+                {isIdle ? '대기' : 'LIVE'}
+              </span>
+              <span className="truncate text-sm font-medium text-foreground">
+                {tmuxName}
+              </span>
+            </span>
+          );
           return (
             <div key={id} className="rounded-md transition-colors hover:bg-muted/50">
               <div className="flex items-start">
-                <div className="flex min-w-0 flex-1 flex-col gap-0.5 px-2 py-1.5 text-left">
-                  <span className="flex items-center gap-2">
-                    <span
-                      className={`inline-flex h-1.5 w-1.5 shrink-0 rounded-full ${isIdle ? 'bg-muted-foreground/50' : 'animate-pulse bg-blue-500'}`}
-                      aria-hidden
-                    />
-                    <span
-                      className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold ${isIdle ? 'bg-muted text-muted-foreground' : 'bg-blue-500/15 text-blue-600 dark:text-blue-400'}`}
-                    >
-                      {isIdle ? '대기' : 'LIVE'}
-                    </span>
-                    <span className="truncate text-sm font-medium text-foreground">
-                      {tmuxName ?? '이름 미확인 세션'}
-                    </span>
-                  </span>
-                  <span className="truncate pl-[1.375rem] text-[11px] text-muted-foreground">
-                    {isIdle
-                      ? '아직 대화가 없습니다 — 첫 메시지 후 열람할 수 있습니다'
-                      : '대화 미로딩 — 해당 프로젝트를 열면 제목이 표시됩니다'}
-                  </span>
-                </div>
+                {idleTarget ? (
+                  <button
+                    type="button"
+                    aria-label={`${idleTarget.tmuxName} 대기 세션 열기`}
+                    title="클릭하면 메인 영역에서 첫 메시지를 보낼 수 있습니다"
+                    onClick={() => onIdleSessionOpen(idleTarget)}
+                    className="flex min-w-0 flex-1 flex-col px-2 py-1.5 text-left"
+                  >
+                    {rowContent}
+                  </button>
+                ) : (
+                  <div
+                    title={isIdle ? undefined : '해당 프로젝트를 열면 제목이 표시됩니다'}
+                    className="flex min-w-0 flex-1 flex-col px-2 py-1.5 text-left"
+                  >
+                    {rowContent}
+                  </div>
+                )}
                 {tmuxName && liveSessionLineage.has(id) && killButton(id, tmuxName)}
               </div>
               {tmuxName && liveSessionLineage.has(id) && killStrip(id, tmuxName)}
@@ -288,9 +329,6 @@ export default function SidebarLiveSection({
           );
         })}
       </div>
-      <p className="px-2 pt-2 text-[10px] leading-relaxed text-muted-foreground/70">
-        tmux 안에서 도는 gjc 세션만 감지됩니다 — claude 등 다른 CLI 세션은 표시되지 않습니다.
-      </p>
     </div>
   );
 }

@@ -5,6 +5,7 @@ import {
   EXTERNAL_TMUX_NAME_RE,
   classifyExternalSessions,
   parseExternalPanes,
+  parseGjcPidsFromPsArgs,
   parsePsTree,
 } from '@/modules/providers/services/external-cli-sessions.service.js';
 
@@ -23,6 +24,29 @@ test('parsePsTree parses pid,ppid,comm rows and tolerates the header', () => {
     { pid: 360992, ppid: 1278, comm: 'node' },
     { pid: 1731394, ppid: 1731329, comm: 'codex' },
   ]);
+});
+
+test('parsePsTree normalizes macOS full-path comm to basename (실측 shape)', () => {
+  // macOS `ps -eo comm` prints executable paths (may contain spaces); Linux prints bare names.
+  const out = parsePsTree([
+    '  PID  PPID COMM',
+    '21852 21706 /Applications/ChatGPT.app/Contents/Resources/codex',
+    '21995 21706 /Users/dev/.codex/computer-use/Codex Computer Use.app/Contents/MacOS/SkyComputerUseService',
+    '89726 89725 bun',
+  ].join('\n'));
+  assert.deepEqual(out, [
+    { pid: 21852, ppid: 21706, comm: 'codex' },
+    { pid: 21995, ppid: 21706, comm: 'SkyComputerUseService' },
+    { pid: 89726, ppid: 89725, comm: 'bun' },
+  ]);
+});
+
+test('classifyExternalSessions: macOS full-path codex descendant still classifies via basename', () => {
+  const result = classifyExternalSessions({
+    panes: parseExternalPanes('gpt\t21706\tzsh\n'),
+    procs: parsePsTree('21706     1 zsh\n21852 21706 /Applications/ChatGPT.app/Contents/Resources/codex\n'),
+  });
+  assert.deepEqual(result, [{ tmuxName: 'gpt', kind: 'codex' }]);
 });
 
 test('classifyExternalSessions: claude pane by pane_current_command (실측 shape)', () => {
@@ -141,4 +165,38 @@ test('classifyExternalSessions: sorted by tmux name for stable rendering', () =>
     ],
   });
   assert.deepEqual(result.map((s) => s.tmuxName), ['alpha', 'zeta']);
+});
+
+test('parseGjcPidsFromPsArgs accepts only argv0 and the bun/node first argument', () => {
+  const pids = parseGjcPidsFromPsArgs([
+    '  100 gjc --no-session',
+    '  101 /Users/x/.bun/bin/gjc --flag',
+    '  102 bun /Users/x/.bun/install/global/node_modules/@gajae-code/coding-agent/bin/gjc.js',
+    '  103 node /opt/gjc.js',
+    '  104 bun /Volumes/Data/Dev Workspace/tools/gjc.js',
+    '  105 bun /Users/dev/.bun/bin/gjc',
+    '  200 vim /tmp/gjc',
+    '  201 cat /opt/gjc.js',
+    '  202 bash -c "echo /usr/bin/gjc"',
+    '  203 node build/gjc-tools.js',
+  ].join('\n'));
+
+  assert.deepEqual([...pids].sort((a, b) => a - b), [100, 101, 102, 103, 104, 105]);
+});
+
+test('classifyExternalSessions: bun으로 도는 gjc도 gjcPids로 제외 (macOS live lane contract)', () => {
+  const result = classifyExternalSessions({
+    panes: [
+      { name: 'mixed', pid: 1000, command: 'zsh' },
+      { name: 'pure-claude', pid: 2000, command: 'claude' },
+    ],
+    procs: [
+      { pid: 1000, ppid: 1, comm: 'zsh' },
+      { pid: 1001, ppid: 1000, comm: 'bun' },    // gjc via bun — comm으로는 안 보임
+      { pid: 1002, ppid: 1000, comm: 'claude' }, // 같은 세션에 claude 공존
+      { pid: 2000, ppid: 1, comm: 'claude' },
+    ],
+    gjcPids: new Set([1001]),
+  });
+  assert.deepEqual(result, [{ tmuxName: 'pure-claude', kind: 'claude' }]);
 });

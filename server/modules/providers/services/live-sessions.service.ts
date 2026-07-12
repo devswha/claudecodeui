@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
-import { open, readFile, realpath, stat } from 'node:fs/promises';
+import { open, realpath, stat } from 'node:fs/promises';
 
-import { parsePsTree } from './external-cli-sessions.service.js';
+import { gjcPidsFromProcessRecords } from './external-cli-sessions.service.js';
 
 /**
  * Live gjc session detection + tmux-session naming.
@@ -9,14 +9,17 @@ import { parsePsTree } from './external-cli-sessions.service.js';
  * A gjc session is "live" when a running gjc process has its transcript file open.
  * For the "작동 중" fleet view we also map each live session id → the tmux session
  * NAME it runs in (omg / stock / flask / …), by PROCESS LINEAGE:
- *   - lsof (-c gjc -F pn) → {session-id uuid, holder pid} for open session files
- *   - /proc/<pid>/stat    → the holder's ancestor pid chain
+ *   - ps -eo pid=,ppid=,args= → gjc argv evidence + descendants → lsof only
+ *     for candidate pids (macOS: gjc runs under its runtime wrapper, so `bun`
+ *     and `node` descendants are included without scanning those runtimes globally)
+ *   - the same ps snapshot → holder ancestor chains (portable: macOS has no
+ *     /proc)
  *   - tmux list-panes     → {session_name, pane_pid, pane cwd (realpath)}
  *   - a pane_pid found in the holder's ancestor chain → that pane's tmux name (0 ambiguity)
  *   - cwd equality is a FALLBACK only (many-to-many when panes share a cwd)
  *
  * Matching is PATH-AGNOSTIC (uuid + realpath'd cwds), so production cloudcli's
- * decoy HOME (whose `.gjc` is a symlink) does not break it. tmux/lsof/proc access
+ * decoy HOME (whose `.gjc` is a symlink) does not break it. tmux/lsof/ps access
  * is ISOLATED here and fails closed to [] (or tmuxName:null on a miss — the UI
  * falls back to the conversation title).
  *
@@ -70,6 +73,8 @@ const IDLE_TMUX_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 export function findIdleGjcTmuxSessions(args: {
   panes: Array<{ name: string; sid: string; pid: number }>;
   procs: Array<{ pid: number; ppid: number; comm: string }>;
+  /** Pids proven gjc by argv — macOS 실측: script installs' comm is `bun`. */
+  gjcPids?: ReadonlySet<number>;
   excludedNames: ReadonlySet<string>;
 }): Array<{ name: string; sid: string }> {
   const children = new Map<number, number[]>();
@@ -84,6 +89,7 @@ export function findIdleGjcTmuxSessions(args: {
     commByPid.set(proc.pid, proc.comm);
   }
 
+  const gjcPids = args.gjcPids ?? new Set<number>();
   const subtreeHasGjc = (rootPid: number): boolean => {
     const seen = new Set<number>();
     const queue: number[] = [rootPid];
@@ -93,7 +99,7 @@ export function findIdleGjcTmuxSessions(args: {
         continue;
       }
       seen.add(pid);
-      if (commByPid.get(pid) === 'gjc') {
+      if (commByPid.get(pid) === 'gjc' || gjcPids.has(pid)) {
         return true;
       }
       for (const child of children.get(pid) ?? []) {
@@ -265,7 +271,15 @@ const RUN_COMMAND_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 
 function runCommand(command: string, cmdArgs: string[], timeoutMs = 4000): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, cmdArgs, { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
+    const child = spawn(command, cmdArgs, {
+      stdio: ['ignore', 'pipe', 'ignore'],
+      windowsHide: true,
+      // Service managers (launchd/systemd) ship no locale. In a non-UTF-8
+      // locale tmux SANITIZES its output — the \t field separators come back
+      // as `_` and non-ASCII paths get escaped — which silently unparses every
+      // pane row (실측 macOS launchd: 모든 세션 tmuxName null). Force UTF-8.
+      env: { ...process.env, LANG: process.env.LANG || 'en_US.UTF-8' },
+    });
     let stdout = '';
     let size = 0;
     let settled = false;
@@ -303,38 +317,104 @@ async function safeRealpath(target: string): Promise<string | null> {
   }
 }
 
-/** Reads the parent pid from /proc/<pid>/stat (comm may contain spaces/parens). */
-async function readParentPid(pid: number): Promise<number | null> {
-  try {
-    const content = await readFile(`/proc/${pid}/stat`, 'utf8');
-    const rparen = content.lastIndexOf(')');
-    if (rparen < 0) {
-      return null;
+export type PsProcessRecord = { pid: number; ppid: number; args: string };
+
+/** Parses `ps -eo pid=,ppid=,args=` rows while preserving command-line spaces. */
+export function parsePsProcessRecords(output: string): PsProcessRecord[] {
+  const records: PsProcessRecord[] = [];
+  for (const raw of output.split(/\r?\n/)) {
+    const match = /^\s*(\d+)\s+(\d+)\s+(.+?)\s*$/.exec(raw);
+    if (match) {
+      records.push({
+        pid: Number.parseInt(match[1], 10),
+        ppid: Number.parseInt(match[2], 10),
+        args: match[3],
+      });
     }
-    // After "pid (comm)" the fields are: state ppid pgrp … → index 1 is ppid.
-    const fields = content.slice(rparen + 2).trim().split(/\s+/);
-    const ppid = Number.parseInt(fields[1] ?? '', 10);
-    return Number.isFinite(ppid) ? ppid : null;
-  } catch {
-    return null;
   }
+  return records;
+}
+
+/** Includes the seed pids and every descendant from one ps snapshot (cycle guarded). */
+export function expandProcessDescendants(
+  seedPids: ReadonlySet<number>,
+  processes: ReadonlyArray<Pick<PsProcessRecord, 'pid' | 'ppid'>>,
+): Set<number> {
+  const children = new Map<number, number[]>();
+  for (const { pid, ppid } of processes) {
+    if (!Number.isSafeInteger(pid) || pid <= 0 || !Number.isSafeInteger(ppid)) {
+      continue;
+    }
+    const siblings = children.get(ppid);
+    if (siblings) {
+      siblings.push(pid);
+    } else {
+      children.set(ppid, [pid]);
+    }
+  }
+
+  const descendants = new Set<number>();
+  const queue = [...seedPids];
+  for (let index = 0; index < queue.length; index += 1) {
+    const pid = queue[index];
+    if (!Number.isSafeInteger(pid) || pid <= 0 || descendants.has(pid)) {
+      continue;
+    }
+    descendants.add(pid);
+    for (const child of children.get(pid) ?? []) {
+      queue.push(child);
+    }
+  }
+  return descendants;
+}
+function argsCommandBasename(args: string): string {
+  const firstSpace = args.search(/\s/);
+  const argv0 = firstSpace < 0 ? args : args.slice(0, firstSpace);
+  return argv0.slice(argv0.lastIndexOf('/') + 1);
+}
+
+/** Parses `ps -eo pid=,ppid=` output into a child pid → parent pid map. */
+export function parsePidParents(output: string): Map<number, number> {
+  const parents = new Map<number, number>();
+  for (const raw of output.split(/\r?\n/)) {
+    const match = /^\s*(\d+)\s+(\d+)\s*$/.exec(raw);
+    if (match) {
+      parents.set(Number.parseInt(match[1], 10), Number.parseInt(match[2], 10));
+    }
+  }
+  return parents;
 }
 
 /** Walks the ancestor pid chain [pid, ppid, …] toward init (depth/cycle guarded). */
-async function buildPidChain(pid: number): Promise<number[]> {
+export function buildPidChain(pid: number, parents: ReadonlyMap<number, number>): number[] {
   const chain: number[] = [];
   const seen = new Set<number>();
   let cur = pid;
   for (let i = 0; i < 64 && cur > 1 && !seen.has(cur); i += 1) {
     chain.push(cur);
     seen.add(cur);
-    const parent = await readParentPid(cur);
+    const parent = parents.get(cur);
     if (parent == null) {
       break;
     }
     cur = parent;
   }
   return chain;
+}
+
+/** Maps pid → cwd from `lsof -a -p <pids> -d cwd -F pn` output (first path wins). */
+export function parseCwdByPidFromLsof(output: string): Map<number, string> {
+  const cwds = new Map<number, string>();
+  let pid: number | null = null;
+  for (const raw of output.split(/\r?\n/)) {
+    if (raw.startsWith('p')) {
+      const parsed = Number.parseInt(raw.slice(1), 10);
+      pid = Number.isFinite(parsed) ? parsed : null;
+    } else if (raw.startsWith('n') && pid != null && !cwds.has(pid)) {
+      cwds.set(pid, raw.slice(1));
+    }
+  }
+  return cwds;
 }
 
 /** Maps session id → transcript path from lsof `n` lines (first path wins). */
@@ -490,43 +570,74 @@ async function scanLiveGjcSessions(): Promise<LiveGjcScanResult> {
     panes.push({ name: pane.name, sid: pane.sid, pid: pane.pid, cwd: (await safeRealpath(pane.cwd)) ?? pane.cwd });
   }
 
-  // Transcript lane (lsof). A transient lsof failure must not blank the whole
-  // fleet: fall through with zero transcript-backed sessions and let the idle
-  // lane still report gjc panes.
-  let lsofOutput = '';
+  // One ps snapshot identifies gjc process trees and supplies holder ancestry.
+  // A ps failure degrades both dependent lanes to empty; no broad lsof scan is
+  // allowed when gjc ownership cannot be established.
+  let psRecords: PsProcessRecord[] = [];
+  let gjcPids = new Set<number>();
   try {
-    lsofOutput = await runCommand('lsof', ['-c', 'gjc', '-F', 'pn']);
+    const psOutput = await runCommand('ps', ['-eo', 'pid=,ppid=,args=']);
+    psRecords = parsePsProcessRecords(psOutput);
+    gjcPids = gjcPidsFromProcessRecords(psRecords);
   } catch {
-    lsofOutput = '';
+    // fall through with no process evidence
   }
+
+  // Transcript lane (lsof). Restrict collection to gjc and its descendants:
+  // a global bun/node scan can exceed the subprocess resource guard.
+  let lsofOutput = '';
+  const candidatePids = [...expandProcessDescendants(gjcPids, psRecords)];
+  if (candidatePids.length > 0) {
+    try {
+      lsofOutput = await runCommand('lsof', ['-a', '-p', candidatePids.join(','), '-F', 'pn']);
+    } catch {
+      // fall through with no transcript-backed sessions
+    }
+  }
+  const holders = parseLsofPidSessions(lsofOutput);
+
+  const parents = new Map<number, number>();
+  for (const { pid, ppid } of psRecords) {
+    parents.set(pid, ppid);
+  }
+
+  // Holder cwds for the label-only fallback — /proc/<pid>/cwd does not exist on
+  // macOS; one batched lsof -d cwd works on both platforms. Best-effort too.
+  let cwdByPid = new Map<number, string>();
+  const holderPids = [...new Set(holders.map((holder) => holder.pid))];
+  if (holderPids.length > 0) {
+    try {
+      cwdByPid = parseCwdByPidFromLsof(
+        await runCommand('lsof', ['-a', '-p', holderPids.join(','), '-d', 'cwd', '-F', 'pn']),
+      );
+    } catch {
+      // fall through with an empty map
+    }
+  }
+
   const sessions: Array<{ id: string; pidChain: number[]; cwd: string | null }> = [];
-  for (const { id, pid } of parseLsofPidSessions(lsofOutput)) {
+  for (const { id, pid } of holders) {
+    const rawCwd = cwdByPid.get(pid);
     sessions.push({
       id,
-      pidChain: await buildPidChain(pid),
-      cwd: await safeRealpath(`/proc/${pid}/cwd`),
+      pidChain: buildPidChain(pid, parents),
+      cwd: rawCwd ? await safeRealpath(rawCwd) : null,
     });
   }
 
   const sessionPaths = extractSessionPathsFromLsof(lsofOutput);
   const named = computeLiveSessions({ tmuxPresent: true, panes, sessions });
 
-  // gjc panes with no open transcript (first message pending). Best-effort:
-  // a ps failure only hides idle rows, never the lsof-backed ones. Exclusion
-  // is LINEAGE names only — a cwd label must not hide a subtree-proven pane.
-  let idlePanes: Array<{ name: string; sid: string }> = [];
-  try {
-    const psOutput = await runCommand('ps', ['-eo', 'pid,ppid,comm']);
-    idlePanes = findIdleGjcTmuxSessions({
-      panes,
-      procs: parsePsTree(psOutput),
-      excludedNames: new Set(
-        named.flatMap((session) => (session.claim === 'lineage' && session.tmuxName ? [session.tmuxName] : [])),
-      ),
-    });
-  } catch {
-    // ignore — the idle lane is additive
-  }
+  // gjc panes with no open transcript (first message pending). Reuse the
+  // process snapshot above; a ps failure simply leaves this additive lane empty.
+  const idlePanes = findIdleGjcTmuxSessions({
+    panes,
+    procs: psRecords.map(({ pid, ppid, args }) => ({ pid, ppid, comm: argsCommandBasename(args) })),
+    gjcPids,
+    excludedNames: new Set(
+      named.flatMap((session) => (session.claim === 'lineage' && session.tmuxName ? [session.tmuxName] : [])),
+    ),
+  });
 
   // Enrich with the current model (last model_change in the transcript tail).
   const enriched = await Promise.all(

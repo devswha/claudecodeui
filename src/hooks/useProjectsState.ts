@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { NavigateFunction } from 'react-router-dom';
 
 import { api } from '../utils/api';
+import { nextLivePollDelay } from '../utils/livePollBoost';
 import type { ServerEvent } from '../contexts/WebSocketContext';
 import type {
   AppTab,
@@ -460,11 +461,21 @@ export function useProjectsState({
         // for read-only protection).
       }
     };
+    // Self-scheduling instead of setInterval: the delay shrinks to ~1s for a
+    // short window after a relay send (see livePollBoost) so the idle→live
+    // transition is picked up quickly, then returns to the 5s baseline.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const schedule = () => {
+      timer = setTimeout(async () => {
+        await poll();
+        if (!cancelled) schedule();
+      }, nextLivePollDelay());
+    };
     void poll();
-    const timer = setInterval(poll, 5000);
+    schedule();
     return () => {
       cancelled = true;
-      clearInterval(timer);
+      if (timer !== undefined) clearTimeout(timer);
     };
   }, []);
 

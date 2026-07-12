@@ -1,7 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+
+import { LiveAnswerContext } from '../../liveAnswerContext';
+
 import { QuestionAnswerContent } from './QuestionAnswerContent';
 
 // Regression coverage for the chat-interface crash where an AskUserQuestion
@@ -74,4 +78,40 @@ test('still renders a well-formed question + answer', () => {
     }),
   );
   assert.ok(html.includes('Pick one?'));
+});
+
+test('live answer buttons: absent without a LiveAnswerContext, present (per unanswered option) with one', () => {
+  const question = { question: 'Pick one?', options: [{ label: 'A안' }, { label: 'B안' }] };
+
+  // No context (historical transcript) → read-only, no answer hint.
+  const readonly = renderToStaticMarkup(
+    React.createElement(QuestionAnswerContent, { questions: [question], answers: {} }),
+  );
+  assert.ok(!readonly.includes('세션 메뉴에 자동 반영'));
+
+  // Live context + unanswered question → clickable option buttons appear.
+  const live = renderToStaticMarkup(
+    React.createElement(
+      LiveAnswerContext.Provider,
+      { value: async () => ({ ok: true, stale: false, detail: 'ok' }) },
+      React.createElement(QuestionAnswerContent, { questions: [question], answers: {} }),
+    ),
+  );
+  assert.ok(live.includes('세션 메뉴에 자동 반영'));
+  assert.ok(live.includes('A안'));
+  assert.ok(live.includes('B안'));
+});
+
+test('live answer buttons: suppressed once the question already has a recorded answer', () => {
+  const html = renderToStaticMarkup(
+    React.createElement(
+      LiveAnswerContext.Provider,
+      { value: async () => ({ ok: true, stale: false, detail: 'ok' }) },
+      React.createElement(QuestionAnswerContent, {
+        questions: [{ question: 'Pick one?', options: [{ label: 'A안' }, { label: 'B안' }] }],
+        answers: { 'Pick one?': 'A안' },
+      }),
+    ),
+  );
+  assert.ok(!html.includes('세션 메뉴에 자동 반영'));
 });

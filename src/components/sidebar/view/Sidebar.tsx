@@ -46,6 +46,7 @@ function Sidebar({
   onCloseSettings,
   isMobile,
   onExternalTerminalOpen,
+  onIdleSessionOpen,
 }: SidebarProps) {
   const { t } = useTranslation(['sidebar', 'common']);
   const { isPWA } = useDeviceSettings({ trackMobile: false });
@@ -316,6 +317,7 @@ function Sidebar({
             liveSessionLineage={liveSessionLineage}
             liveSessionTmuxIds={liveSessionTmuxIds}
             onExternalTerminalOpen={onExternalTerminalOpen}
+            onIdleSessionOpen={onIdleSessionOpen}
             t={t}
           />
         </>

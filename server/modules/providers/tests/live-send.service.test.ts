@@ -7,6 +7,7 @@ import {
   isValidSpawnName,
   classifySpawnResponse,
   classifyKillResponse,
+  classifyAnswerResponse,
 } from '@/modules/providers/services/live-send.service.js';
 
 test('isValidTmuxName accepts simple session tokens, rejects unsafe ones', () => {
@@ -73,4 +74,16 @@ test('classifyKillResponse: 2xx ok, 403 protected, 422 unknown (all reachable)',
   assert.equal(failed.ok, false);
   assert.equal(failed.protected, false);
   assert.equal(failed.unknown, false);
+});
+
+test('classifyAnswerResponse: 2xx ok, 409 marks stale menu, others plain failure', () => {
+  assert.deepEqual(classifyAnswerResponse(200, 'answered omg: 빨강'), {
+    ok: true, reachable: true, stale: false, detail: 'answered omg: 빨강',
+  });
+  assert.deepEqual(classifyAnswerResponse(409, 'ask menu is not showing "빨강"'), {
+    ok: false, reachable: true, stale: true, detail: 'ask menu is not showing "빨강"',
+  });
+  assert.deepEqual(classifyAnswerResponse(422, 'no such tmux session: omg'), {
+    ok: false, reachable: true, stale: false, detail: 'no such tmux session: omg',
+  });
 });
