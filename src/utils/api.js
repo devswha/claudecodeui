@@ -98,6 +98,17 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(tmuxId ? { tmuxName, tmuxId } : { tmuxName }),
     }),
+  // Slash commands a live tmux gjc session can execute (native + project +
+  // skills) — powers the live relay composer's command palette.
+  /**
+   * @param {string} [workspacePath]
+   */
+  liveSessionCommands: (workspacePath) => {
+    const params = new URLSearchParams();
+    if (workspacePath) params.set('workspacePath', workspacePath);
+    const qs = params.toString();
+    return authenticatedFetch(`/api/providers/sessions/live/commands${qs ? `?${qs}` : ''}`);
+  },
   // External CLI (claude/codex) tmux sessions for the terminal-attach lane.
   externalSessions: () => authenticatedFetch('/api/providers/sessions/external'),
   // Home-relative directory autocomplete ({ home, suggestions }).

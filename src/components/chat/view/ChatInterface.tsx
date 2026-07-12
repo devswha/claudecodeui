@@ -108,6 +108,7 @@ function ChatInterface({
     hasMoreMessages,
     totalMessages,
     isUserScrolledUp,
+    hasNewMessagesBelow,
     setIsUserScrolledUp,
     tokenBudget,
     setTokenBudget,
@@ -397,9 +398,16 @@ function ChatInterface({
                 type="button"
                 onClick={scrollToBottomAndReset}
                 aria-label={t('input.scrollToBottom', { defaultValue: 'Scroll to bottom' })}
-                className="pointer-events-auto flex h-8 w-8 items-center justify-center rounded-full border border-border/50 bg-card text-muted-foreground shadow-sm transition-all duration-200 hover:bg-accent hover:text-foreground"
                 title={t('input.scrollToBottom', { defaultValue: 'Scroll to bottom' })}
+                className={
+                  hasNewMessagesBelow
+                    ? 'pointer-events-auto flex h-8 items-center gap-1.5 rounded-full border border-primary/30 bg-primary px-3 text-xs font-medium text-primary-foreground shadow-md transition-all duration-200 hover:brightness-110'
+                    : 'pointer-events-auto flex h-8 w-8 items-center justify-center rounded-full border border-border/50 bg-card text-muted-foreground shadow-sm transition-all duration-200 hover:bg-accent hover:text-foreground'
+                }
               >
+                {hasNewMessagesBelow && (
+                  <span>{t('input.newMessages', { defaultValue: '새 메시지' })}</span>
+                )}
                 <ArrowDownIcon className="h-4 w-4" aria-hidden />
               </button>
             </div>
@@ -409,7 +417,7 @@ function ChatInterface({
             liveSessionTmuxName ? (
               // key: remount per tmux target — a draft/in-flight status typed
               // for session A must never survive a switch to target B (리뷰 반영).
-              <LiveRelayComposer key={liveSessionTmuxName} tmuxName={liveSessionTmuxName} tmuxId={liveSessionTmuxId} model={liveSessionModel} />
+              <LiveRelayComposer key={liveSessionTmuxName} tmuxName={liveSessionTmuxName} tmuxId={liveSessionTmuxId} model={liveSessionModel} workspacePath={selectedProject.fullPath || selectedProject.path} />
             ) : (
               <div className="chat-composer-shell relative flex-shrink-0 px-2 pb-3 pt-2 sm:px-4">
                 <div className="mx-auto flex max-w-[54.25rem] items-center gap-2 rounded-xl border border-blue-500/30 bg-blue-500/10 px-4 py-3 text-sm text-blue-700 dark:text-blue-300">

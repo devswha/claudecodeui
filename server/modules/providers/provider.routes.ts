@@ -11,6 +11,7 @@ import { getLiveGjcSessions, IDLE_GJC_ID_PREFIX } from '@/modules/providers/serv
 import { getExternalCliSessions } from '@/modules/providers/services/external-cli-sessions.service.js';
 import { getHomeDir, getHomeDirSuggestions } from '@/modules/providers/services/home-dirs.service.js';
 import { isValidTmuxName, sendToLiveSession, isValidSpawnName, spawnLiveSession, killLiveSession } from '@/modules/providers/services/live-send.service.js';
+import { listLiveGjcCommands } from '@/modules/providers/services/live-commands.service.js';
 import type {
   LLMProvider,
   McpScope,
@@ -699,6 +700,18 @@ router.post(
     await assertLineageTmuxTarget(body.tmuxName, readTmuxIdParam(body.tmuxId));
     const result = await killLiveSession(body.tmuxName);
     res.json(createApiSuccessResponse(result));
+  }),
+);
+
+router.get(
+  '/sessions/live/commands',
+  asyncHandler(async (req: Request, res: Response) => {
+    // Slash commands a live tmux gjc session can execute — native
+    // (`~/.gjc/agent/commands`), project (`<workspace>/.gjc/commands`), and
+    // installed skills. Read-only; powers the live relay composer's palette.
+    const workspacePath = readOptionalQueryString(req.query.workspacePath);
+    const commands = await listLiveGjcCommands(workspacePath);
+    res.json(createApiSuccessResponse({ commands }));
   }),
 );
 

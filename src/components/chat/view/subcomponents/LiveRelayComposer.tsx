@@ -1,6 +1,9 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { KeyboardEvent } from 'react';
 
 import { api } from '../../../../utils/api';
+
+import CommandMenu from './CommandMenu';
 
 type RelayStatus =
   | { kind: 'idle' }
@@ -9,21 +12,164 @@ type RelayStatus =
   | { kind: 'queued'; text: string }
   | { kind: 'error'; text: string };
 
+type LiveGjcCommand = {
+  name: string;
+  description?: string;
+  namespace?: string;
+  scope?: string;
+  sourcePath?: string;
+};
+
+/** The active `/…` token under the caret, or null when none applies. */
+function getActiveSlashToken(text: string, caret: number): { start: number; query: string } | null {
+  for (let index = caret - 1; index >= 0; index -= 1) {
+    const char = text[index];
+    if (char === '/') {
+      const precededByBoundary = index === 0 || /\s/.test(text[index - 1]);
+      if (!precededByBoundary) {
+        return null;
+      }
+      const query = text.slice(index, caret);
+      // A whitespace inside the token means the command is already fully typed.
+      return /\s/.test(query) ? null : { start: index, query };
+    }
+    if (/\s/.test(char)) {
+      return null;
+    }
+  }
+  return null;
+}
+
+function filterCommands(commands: LiveGjcCommand[], query: string): LiveGjcCommand[] {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized || normalized === '/') {
+    return commands;
+  }
+  const prefix = normalized.startsWith('/') ? normalized : `/${normalized}`;
+  const bare = prefix.slice(1);
+
+  const byPrefix = commands.filter((command) => command.name.toLowerCase().startsWith(prefix));
+  if (byPrefix.length > 0) {
+    return byPrefix;
+  }
+  const bySubstring = commands.filter((command) => command.name.toLowerCase().includes(bare));
+  if (bySubstring.length > 0) {
+    return bySubstring;
+  }
+  return commands.filter((command) => command.description?.toLowerCase().includes(bare));
+}
+
 /**
  * Composer for a live (read-only) session. It does NOT inject into the
  * conversation — it relays the message to the control tower's /send (via the
  * server proxy), which owns outbox/queueing + injection + verification. Shows
  * delivered / queued / error feedback based on the tower's response.
  *
+ * A `/` at the start of a word opens a command palette of the slash commands
+ * that live gjc session can run — native commands (`~/.gjc/agent/commands`),
+ * project commands (`<cwd>/.gjc/commands`), and installed skills — loaded
+ * dynamically from the server. Selecting one inserts it into the draft; the
+ * command text itself is relayed through the same tower /send path (the tower
+ * injects it into the tmux TUI), so no separate execution channel is needed.
+ *
  * The status line leads with the session's CURRENT MODEL (from the gjc
  * transcript's last model_change, threaded through the live poll) — the tmux
  * name stays as a muted suffix so the send target remains identifiable.
  */
-export default function LiveRelayComposer({ tmuxName, tmuxId = null, model = null }: { tmuxName: string; tmuxId?: string | null; model?: string | null }) {
+export default function LiveRelayComposer({
+  tmuxName,
+  tmuxId = null,
+  model = null,
+  workspacePath = null,
+}: {
+  tmuxName: string;
+  tmuxId?: string | null;
+  model?: string | null;
+  workspacePath?: string | null;
+}) {
   const [input, setInput] = useState('');
   const [status, setStatus] = useState<RelayStatus>({ kind: 'idle' });
 
-  const send = async () => {
+  const [commands, setCommands] = useState<LiveGjcCommand[]>([]);
+  const [filteredCommands, setFilteredCommands] = useState<LiveGjcCommand[]>([]);
+  const [showCommandMenu, setShowCommandMenu] = useState(false);
+  const [selectedCommandIndex, setSelectedCommandIndex] = useState(0);
+  const slashTokenStartRef = useRef(-1);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Load the invokable slash commands for this session once per target. Failure
+  // (no gjc home / tower / commands) degrades silently to a plain relay box.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const response = await api.liveSessionCommands(workspacePath ?? undefined);
+        if (!response.ok) {
+          return;
+        }
+        const body = await response.json().catch(() => null);
+        const list = (body?.data?.commands ?? body?.commands ?? []) as LiveGjcCommand[];
+        if (!cancelled && Array.isArray(list)) {
+          setCommands(list);
+        }
+      } catch {
+        // Non-fatal — the composer still relays free text.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [workspacePath]);
+
+  const closeCommandMenu = useCallback(() => {
+    setShowCommandMenu(false);
+    slashTokenStartRef.current = -1;
+    setSelectedCommandIndex(0);
+  }, []);
+
+  const syncCommandMenu = useCallback(
+    (nextValue: string, caret: number) => {
+      const token = commands.length > 0 ? getActiveSlashToken(nextValue, caret) : null;
+      if (!token) {
+        if (showCommandMenu) {
+          closeCommandMenu();
+        }
+        return;
+      }
+      const filtered = filterCommands(commands, token.query);
+      slashTokenStartRef.current = token.start;
+      setFilteredCommands(filtered);
+      setShowCommandMenu(filtered.length > 0);
+      setSelectedCommandIndex(0);
+    },
+    [commands, showCommandMenu, closeCommandMenu],
+  );
+
+  const insertCommand = useCallback(
+    (command: LiveGjcCommand) => {
+      const textarea = textareaRef.current;
+      const caret = textarea?.selectionStart ?? input.length;
+      const start = slashTokenStartRef.current >= 0 ? slashTokenStartRef.current : caret;
+      const before = input.slice(0, start);
+      const after = input.slice(caret);
+      const needsGap = after.length > 0 && !after.startsWith(' ');
+      const nextValue = `${before}${command.name} ${needsGap ? after.trimStart() : after}`;
+      setInput(nextValue);
+      closeCommandMenu();
+
+      const nextCaret = before.length + command.name.length + 1;
+      requestAnimationFrame(() => {
+        const node = textareaRef.current;
+        if (node) {
+          node.focus();
+          node.setSelectionRange(nextCaret, nextCaret);
+        }
+      });
+    },
+    [input, closeCommandMenu],
+  );
+
+  const send = useCallback(async () => {
     const message = input.trim();
     if (!message || status.kind === 'sending') {
       return;
@@ -48,7 +194,49 @@ export default function LiveRelayComposer({ tmuxName, tmuxId = null, model = nul
     } catch {
       setStatus({ kind: 'error', text: '전송 실패' });
     }
-  };
+  }, [input, status.kind, tmuxName, tmuxId]);
+
+  const handleKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLTextAreaElement>) => {
+      if (showCommandMenu && filteredCommands.length > 0) {
+        if (event.key === 'ArrowDown') {
+          event.preventDefault();
+          setSelectedCommandIndex((index) => (index + 1) % filteredCommands.length);
+          return;
+        }
+        if (event.key === 'ArrowUp') {
+          event.preventDefault();
+          setSelectedCommandIndex((index) => (index - 1 + filteredCommands.length) % filteredCommands.length);
+          return;
+        }
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          closeCommandMenu();
+          return;
+        }
+        if ((event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) || event.key === 'Tab') {
+          event.preventDefault();
+          const index = selectedCommandIndex >= 0 && selectedCommandIndex < filteredCommands.length ? selectedCommandIndex : 0;
+          insertCommand(filteredCommands[index]);
+          return;
+        }
+      }
+
+      if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+        event.preventDefault();
+        void send();
+      }
+    },
+    [showCommandMenu, filteredCommands, selectedCommandIndex, closeCommandMenu, insertCommand, send],
+  );
+
+  const menuPosition = (() => {
+    const rect = textareaRef.current?.getBoundingClientRect();
+    if (!rect || typeof window === 'undefined') {
+      return { top: 0, left: 0, bottom: 90 };
+    }
+    return { top: rect.top, left: rect.left, bottom: Math.max(16, window.innerHeight - rect.top + 8) };
+  })();
 
   return (
     <div className="chat-composer-shell relative flex-shrink-0 px-2 pb-3 pt-2 sm:px-4">
@@ -69,16 +257,17 @@ export default function LiveRelayComposer({ tmuxName, tmuxId = null, model = nul
         </div>
         <div className="flex items-end gap-2 rounded-xl border border-border bg-card p-2">
           <textarea
+            ref={textareaRef}
             value={input}
-            onChange={(event) => setInput(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
-                event.preventDefault();
-                void send();
-              }
+            onChange={(event) => {
+              const nextValue = event.target.value;
+              setInput(nextValue);
+              syncCommandMenu(nextValue, event.target.selectionStart ?? nextValue.length);
             }}
+            onKeyDown={handleKeyDown}
+            onClick={(event) => syncCommandMenu(input, event.currentTarget.selectionStart ?? input.length)}
             rows={1}
-            placeholder={`${tmuxName}에 지시… (Enter 전송, Shift+Enter 줄바꿈)`}
+            placeholder={`${tmuxName}에 지시… ( / 명령, Enter 전송, Shift+Enter 줄바꿈)`}
             className="max-h-40 min-h-9 flex-1 resize-none bg-transparent px-2 py-1.5 text-sm outline-none"
           />
           <button
@@ -91,6 +280,21 @@ export default function LiveRelayComposer({ tmuxName, tmuxId = null, model = nul
           </button>
         </div>
       </div>
+
+      <CommandMenu
+        isOpen={showCommandMenu}
+        commands={filteredCommands}
+        selectedIndex={selectedCommandIndex}
+        onSelect={(command, index, isHover) => {
+          if (isHover) {
+            setSelectedCommandIndex(index);
+            return;
+          }
+          insertCommand(command as LiveGjcCommand);
+        }}
+        onClose={closeCommandMenu}
+        position={menuPosition}
+      />
     </div>
   );
 }

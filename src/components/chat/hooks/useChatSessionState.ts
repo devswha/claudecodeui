@@ -113,6 +113,7 @@ export function useChatSessionState({
   const [hasMoreMessages, setHasMoreMessages] = useState(false);
   const [totalMessages, setTotalMessages] = useState(0);
   const [isUserScrolledUp, setIsUserScrolledUp] = useState(false);
+  const [hasNewMessagesBelow, setHasNewMessagesBelow] = useState(false);
   const [tokenBudget, setTokenBudget] = useState<Record<string, unknown> | null>(null);
   const [visibleMessageCount, setVisibleMessageCount] = useState(INITIAL_VISIBLE_MESSAGES);
   const [allMessagesLoaded, setAllMessagesLoaded] = useState(false);
@@ -311,6 +312,7 @@ export function useChatSessionState({
 
   const scrollToBottomAndReset = useCallback(() => {
     scrollToBottom();
+    setHasNewMessagesBelow(false);
     if (allMessagesLoaded) {
       setVisibleMessageCount(INITIAL_VISIBLE_MESSAGES);
       setAllMessagesLoaded(false);
@@ -381,6 +383,7 @@ export function useChatSessionState({
 
     const nearBottom = isNearBottom();
     setIsUserScrolledUp(!nearBottom);
+    if (nearBottom) setHasNewMessagesBelow(false);
 
     const scrolledNearTop = container.scrollTop < 100;
 
@@ -755,6 +758,48 @@ export function useChatSessionState({
     if (heightDiff > 0 && prevTop > 0) container.scrollTop = prevTop + heightDiff;
   }, [chatMessages.length, isLoadingMoreMessages, isUserScrolledUp, scrollToBottom]);
 
+  // Keep the viewport pinned to the newest content while the user sits at the
+  // bottom — *including* intra-message streaming growth. The length-based
+  // effect above only reacts to `chatMessages.length`, but a streaming reply
+  // grows the last message's content in place (length unchanged) via the
+  // store's `updateStreaming`, so without this the viewport falls behind a
+  // long answer while it streams. When the user has scrolled up to read,
+  // surface a "new messages" affordance instead of yanking their position.
+  const lastMessageContentLength =
+    chatMessages.length > 0 && typeof chatMessages[chatMessages.length - 1]?.content === 'string'
+      ? (chatMessages[chatMessages.length - 1].content as string).length
+      : 0;
+  const lastContentSignatureRef = useRef({ count: 0, contentLength: 0 });
+  useEffect(() => {
+    const previous = lastContentSignatureRef.current;
+    const grew =
+      chatMessages.length > previous.count || lastMessageContentLength > previous.contentLength;
+    lastContentSignatureRef.current = { count: chatMessages.length, contentLength: lastMessageContentLength };
+    if (chatMessages.length === 0 || !grew) return;
+    // Older-message prepends (load more / load all) grow length at the TOP and
+    // are re-anchored by the scroll-restore layout effect — never treat them
+    // as new content below.
+    if (
+      isLoadingMoreRef.current ||
+      isLoadingMoreMessages ||
+      pendingScrollRestoreRef.current ||
+      searchScrollActiveRef.current
+    ) {
+      return;
+    }
+    if (isUserScrolledUp) {
+      setHasNewMessagesBelow(true);
+    } else {
+      scrollToBottom();
+    }
+  }, [chatMessages.length, lastMessageContentLength, isLoadingMoreMessages, isUserScrolledUp, scrollToBottom]);
+
+  // Clear the "new messages" affordance when the viewed session changes.
+  useEffect(() => {
+    setHasNewMessagesBelow(false);
+    lastContentSignatureRef.current = { count: 0, contentLength: 0 };
+  }, [activeSessionId]);
+
   useEffect(() => {
     const container = scrollContainerRef.current;
     if (!container) return;
@@ -841,6 +886,7 @@ export function useChatSessionState({
     hasMoreMessages,
     totalMessages,
     isUserScrolledUp,
+    hasNewMessagesBelow,
     setIsUserScrolledUp,
     tokenBudget,
     setTokenBudget,
