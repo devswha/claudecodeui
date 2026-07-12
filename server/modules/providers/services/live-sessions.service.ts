@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { open, realpath, stat } from 'node:fs/promises';
 
-import { parsePsTree } from './external-cli-sessions.service.js';
+import { parseGjcPidsFromPsArgs, parsePsTree } from './external-cli-sessions.service.js';
 
 /**
  * Live gjc session detection + tmux-session naming.
@@ -73,6 +73,8 @@ const IDLE_TMUX_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 export function findIdleGjcTmuxSessions(args: {
   panes: Array<{ name: string; sid: string; pid: number }>;
   procs: Array<{ pid: number; ppid: number; comm: string }>;
+  /** Pids proven gjc by argv — macOS 실측: script installs' comm is `bun`. */
+  gjcPids?: ReadonlySet<number>;
   excludedNames: ReadonlySet<string>;
 }): Array<{ name: string; sid: string }> {
   const children = new Map<number, number[]>();
@@ -87,6 +89,7 @@ export function findIdleGjcTmuxSessions(args: {
     commByPid.set(proc.pid, proc.comm);
   }
 
+  const gjcPids = args.gjcPids ?? new Set<number>();
   const subtreeHasGjc = (rootPid: number): boolean => {
     const seen = new Set<number>();
     const queue: number[] = [rootPid];
@@ -96,7 +99,7 @@ export function findIdleGjcTmuxSessions(args: {
         continue;
       }
       seen.add(pid);
-      if (commByPid.get(pid) === 'gjc') {
+      if (commByPid.get(pid) === 'gjc' || gjcPids.has(pid)) {
         return true;
       }
       for (const child of children.get(pid) ?? []) {
@@ -566,10 +569,15 @@ async function scanLiveGjcSessions(): Promise<LiveGjcScanResult> {
   // is LINEAGE names only — a cwd label must not hide a subtree-proven pane.
   let idlePanes: Array<{ name: string; sid: string }> = [];
   try {
-    const psOutput = await runCommand('ps', ['-eo', 'pid,ppid,comm']);
+    const [psOutput, psArgsOutput] = await Promise.all([
+      runCommand('ps', ['-eo', 'pid,ppid,comm']),
+      // argv snapshot: comm cannot see script installs (macOS: gjc → `bun`).
+      runCommand('ps', ['-eo', 'pid=,args=']),
+    ]);
     idlePanes = findIdleGjcTmuxSessions({
       panes,
       procs: parsePsTree(psOutput),
+      gjcPids: parseGjcPidsFromPsArgs(psArgsOutput),
       excludedNames: new Set(
         named.flatMap((session) => (session.claim === 'lineage' && session.tmuxName ? [session.tmuxName] : [])),
       ),

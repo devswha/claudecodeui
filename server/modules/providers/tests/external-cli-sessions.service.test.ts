@@ -5,6 +5,7 @@ import {
   EXTERNAL_TMUX_NAME_RE,
   classifyExternalSessions,
   parseExternalPanes,
+  parseGjcPidsFromPsArgs,
   parsePsTree,
 } from '@/modules/providers/services/external-cli-sessions.service.js';
 
@@ -164,4 +165,33 @@ test('classifyExternalSessions: sorted by tmux name for stable rendering', () =>
     ],
   });
   assert.deepEqual(result.map((s) => s.tmuxName), ['alpha', 'zeta']);
+});
+
+test('parseGjcPidsFromPsArgs: argv 증거로 gjc pid 식별 (macOS 실측 shapes)', () => {
+  const pids = parseGjcPidsFromPsArgs([
+    '89726 bun /Users/dev/.bun/bin/gjc',                       // macOS script install
+    '  100 gjc --no-session',                                  // Linux native binary (argv0)
+    '  200 node /opt/gjc/bin/gjc.js notify daemon-internal',   // node runtime
+    '  300 grep gjc server.log',                               // bare word — NOT evidence
+    '  400 vim gjc-notes.md',                                  // 유사 이름 — NOT evidence
+    '  500 zsh -c export PATH=…; /Users/dev/.bun/bin/gjc; rc=$?', // launcher wrapper
+  ].join('\n'));
+  assert.deepEqual([...pids].sort((a, b) => a - b), [89726, 100, 200, 500].sort((a, b) => a - b));
+});
+
+test('classifyExternalSessions: bun으로 도는 gjc도 gjcPids로 제외 (macOS live lane contract)', () => {
+  const result = classifyExternalSessions({
+    panes: [
+      { name: 'mixed', pid: 1000, command: 'zsh' },
+      { name: 'pure-claude', pid: 2000, command: 'claude' },
+    ],
+    procs: [
+      { pid: 1000, ppid: 1, comm: 'zsh' },
+      { pid: 1001, ppid: 1000, comm: 'bun' },    // gjc via bun — comm으로는 안 보임
+      { pid: 1002, ppid: 1000, comm: 'claude' }, // 같은 세션에 claude 공존
+      { pid: 2000, ppid: 1, comm: 'claude' },
+    ],
+    gjcPids: new Set([1001]),
+  });
+  assert.deepEqual(result, [{ tmuxName: 'pure-claude', kind: 'claude' }]);
 });

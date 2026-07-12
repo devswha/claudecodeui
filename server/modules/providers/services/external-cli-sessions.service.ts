@@ -75,6 +75,40 @@ export function parsePsTree(output: string): Array<{ pid: number; ppid: number; 
 }
 
 /**
+ * Pids whose COMMAND LINE identifies gjc, from `ps -eo pid=,args=` output.
+ * comm alone cannot see script installs — macOS 실측: gjc runs as
+ * `bun /…/.bun/bin/gjc`, so comm is `bun`. Argv is the portable evidence:
+ * a pid counts when argv[0]'s basename is 'gjc', or any PATH-looking token
+ * ('/' 포함) has basename 'gjc'/'gjc.js' (covers `bun /…/gjc`,
+ * `node /…/gjc.js`, wrapper scripts). Bare non-argv0 'gjc' words
+ * (e.g. `grep gjc`) are deliberately NOT evidence.
+ */
+export function parseGjcPidsFromPsArgs(output: string): Set<number> {
+  const pids = new Set<number>();
+  for (const raw of output.split(/\r?\n/)) {
+    const match = /^\s*(\d+)\s+(.+)$/.exec(raw);
+    if (!match) {
+      continue;
+    }
+    const tokens = match[2].trim().split(/\s+/);
+    const isGjc = tokens.some((rawToken, index) => {
+      // Shell wrapper argv flattens `sh -c "…; /path/gjc; rc=$?"` into tokens
+      // like `/path/gjc;` — strip trailing shell punctuation before matching.
+      const token = rawToken.replace(/[;,)&|]+$/, '');
+      const base = token.slice(token.lastIndexOf('/') + 1);
+      if (index === 0) {
+        return base === 'gjc';
+      }
+      return token.includes('/') && (base === 'gjc' || base === 'gjc.js');
+    });
+    if (isGjc) {
+      pids.add(Number.parseInt(match[1], 10));
+    }
+  }
+  return pids;
+}
+
+/**
  * Pure classification: tmux panes + a ps snapshot → external CLI sessions.
  *
  * Per pane, the comm set is {pane_current_command} ∪ {comm of every /proc
@@ -89,6 +123,8 @@ export function parsePsTree(output: string): Array<{ pid: number; ppid: number; 
 export function classifyExternalSessions(args: {
   panes: Array<{ name: string; pid: number; command: string }>;
   procs: Array<{ pid: number; ppid: number; comm: string }>;
+  /** Pids proven gjc by argv (script installs whose comm is the runtime). */
+  gjcPids?: ReadonlySet<number>;
 }): ExternalCliSession[] {
   const children = new Map<number, number[]>();
   for (const proc of args.procs) {
@@ -99,6 +135,13 @@ export function classifyExternalSessions(args: {
       children.set(proc.ppid, [proc.pid]);
     }
   }
+
+  /**
+   * gjc evidence beyond comm: script installs run under their runtime (macOS
+   * 실측: comm은 `bun`), so pids proven gjc by ARGV (parseGjcPidsFromPsArgs)
+   * inject a synthetic 'gjc' comm — the exclusion contract stays comm-based.
+   */
+  const gjcPids = args.gjcPids ?? new Set<number>();
   const commByPid = new Map<number, string>();
   for (const proc of args.procs) {
     commByPid.set(proc.pid, proc.comm);
@@ -117,6 +160,9 @@ export function classifyExternalSessions(args: {
       const comm = commByPid.get(pid);
       if (comm) {
         comms.add(comm);
+      }
+      if (gjcPids.has(pid)) {
+        comms.add('gjc');
       }
       for (const child of children.get(pid) ?? []) {
         queue.push(child);
@@ -199,14 +245,17 @@ function runCommand(command: string, cmdArgs: string[], timeoutMs = 4000): Promi
 export async function getExternalCliSessions(): Promise<ExternalCliSession[]> {
   let tmuxOutput: string;
   let psOutput: string;
+  let psArgsOutput: string;
   try {
     tmuxOutput = await runCommand('tmux', ['list-panes', '-a', '-F', `#{session_name}${TMUX_FIELD_SEP}#{pane_pid}${TMUX_FIELD_SEP}#{pane_current_command}`]);
     psOutput = await runCommand('ps', ['-eo', 'pid,ppid,comm']);
+    psArgsOutput = await runCommand('ps', ['-eo', 'pid=,args=']);
   } catch {
     return [];
   }
   return classifyExternalSessions({
     panes: parseExternalPanes(tmuxOutput),
     procs: parsePsTree(psOutput),
+    gjcPids: parseGjcPidsFromPsArgs(psArgsOutput),
   });
 }

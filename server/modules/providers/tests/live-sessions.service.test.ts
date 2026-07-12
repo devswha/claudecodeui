@@ -327,3 +327,20 @@ test('IDLE_GJC_ID_PREFIX cannot collide with transcript uuids (client contract)'
   assert.equal(IDLE_GJC_ID_PREFIX, 'idle-gjc:');
   assert.ok(!/^[0-9a-fA-F-]+$/.test(IDLE_GJC_ID_PREFIX));
 });
+
+test('findIdleGjcTmuxSessions: bun-wrapped gjc pane은 gjcPids 증거로 idle 행이 된다 (macOS 실측)', () => {
+  const result = findIdleGjcTmuxSessions({
+    panes: [
+      { name: 'test', sid: '$7', pid: 27614 },
+      { name: 'plain-shell', sid: '$8', pid: 30000 },
+    ],
+    procs: [
+      { pid: 27614, ppid: 1, comm: 'sh' },
+      { pid: 27615, ppid: 27614, comm: 'bun' }, // gjc via bun — comm 'gjc' 절대 안 됨
+      { pid: 30000, ppid: 1, comm: 'zsh' },
+    ],
+    gjcPids: new Set([27615]),
+    excludedNames: new Set(),
+  });
+  assert.deepEqual(result, [{ name: 'test', sid: '$7' }]);
+});
