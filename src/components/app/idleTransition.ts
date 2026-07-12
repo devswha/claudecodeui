@@ -34,11 +34,16 @@ export function newEligibleSessionIds(target: IdleGjcTarget,
     .filter((id) => !excluded.has(id));
 }
 
-/** 무효화는 **관측된 세대 교체**에만. 단순 소멸(undefined)은 정상 전환 수반이므로 false. [P1-A] */
+/** 무효화는 동명 live row의 관측된 세대 교체에만. 단순 소멸(undefined)은 정상 전환 수반이므로 false. [P1-A] */
 export function isGenerationReplaced(target: IdleGjcTarget,
+  names: ReadonlyMap<string, string>, lineage: ReadonlySet<string>,
   tmuxIds: ReadonlyMap<string, string>): boolean {
-  const src = tmuxIds.get(`idle-gjc:${target.tmuxName}`);
-  return src !== undefined && src !== target.tmuxId;
+  for (const [id, name] of names) {
+    if (name !== target.tmuxName || !lineage.has(id)) continue;
+    const tmuxId = tmuxIds.get(id);
+    if (typeof tmuxId === 'string' && tmuxId !== target.tmuxId) return true;
+  }
+  return false;
 }
 
 export type IdleStep =
@@ -51,7 +56,7 @@ export type IdleStep =
 export function computeIdleStep(target: IdleGjcTarget,
   names: ReadonlyMap<string, string>, lineage: ReadonlySet<string>,
   tmuxIds: ReadonlyMap<string, string>, ownerLoaded: (id: string) => boolean): IdleStep {
-  if (isGenerationReplaced(target, tmuxIds)) return { type: 'invalidate' };
+  if (isGenerationReplaced(target, names, lineage, tmuxIds)) return { type: 'invalidate' };
   const cands = newEligibleSessionIds(target, names, lineage, tmuxIds);
   if (cands.length === 0) return { type: 'idle' };
   if (cands.length > 1) return { type: 'ambiguous' };       // 다중 transcript 정상 구성 → 자동전환 거부[P1-C]

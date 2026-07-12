@@ -236,7 +236,10 @@ function AppContentInner() {
       case 'resolving':
         setIdleAmbiguous(false);
         setResolving((current) => nextResolvingOnStep(current, step));
-        void refreshProjectsSilently();
+        // timeout bounds background refresh work, not recovery navigation.
+        if (!resolvingTimedOut) {
+          void refreshProjectsSilently();
+        }
         return;
       case 'navigate':
         reset();
@@ -249,6 +252,7 @@ function AppContentInner() {
     projects,
     refreshProjectsSilently,
     reset,
+    resolvingTimedOut,
     sidebarSharedProps.liveSessionLineage,
     sidebarSharedProps.liveSessionNames,
     sidebarSharedProps.liveSessionTmuxIds,

@@ -92,15 +92,58 @@ test('newEligibleSessionIds excludes candidates present when the waiting view op
 });
 
 test('isGenerationReplaced treats source removal as a normal transition', () => {
-  assert.equal(isGenerationReplaced(target(), new Map()), false);
+  assert.equal(isGenerationReplaced(target(), new Map(), new Set(), new Map()), false);
 });
 
 test('isGenerationReplaced accepts the current source generation', () => {
-  assert.equal(isGenerationReplaced(target(), new Map([[idleId, tmuxId]])), false);
+  const names = new Map([[idleId, tmuxName]]);
+  const lineage = new Set([idleId]);
+  const tmuxIds = new Map([[idleId, tmuxId]]);
+
+  assert.equal(isGenerationReplaced(target(), names, lineage, tmuxIds), false);
 });
 
 test('isGenerationReplaced detects an observed source generation replacement', () => {
-  assert.equal(isGenerationReplaced(target(), new Map([[idleId, '$2']])), true);
+  const names = new Map([[idleId, tmuxName]]);
+  const lineage = new Set([idleId]);
+  const tmuxIds = new Map([[idleId, '$2']]);
+
+  assert.equal(isGenerationReplaced(target(), names, lineage, tmuxIds), true);
+});
+
+test('computeIdleStep invalidates when only a real replacement generation remains', () => {
+  const names = new Map([['real-$2', tmuxName]]);
+  const lineage = new Set(['real-$2']);
+  const tmuxIds = new Map([['real-$2', '$2']]);
+
+  assert.deepEqual(computeIdleStep(target(), names, lineage, tmuxIds, () => false), { type: 'invalidate' });
+});
+
+test('computeIdleStep invalidates when a stale synthetic row and real replacement coexist', () => {
+  const names = new Map([[idleId, tmuxName], ['real-$2', tmuxName]]);
+  const lineage = new Set([idleId, 'real-$2']);
+  const tmuxIds = new Map([[idleId, tmuxId], ['real-$2', '$2']]);
+
+  assert.deepEqual(computeIdleStep(target(), names, lineage, tmuxIds, () => false), { type: 'invalidate' });
+});
+
+test('computeIdleStep keeps resolving for a real same-generation row', () => {
+  const names = new Map([['real-$1', tmuxName]]);
+  const lineage = new Set(['real-$1']);
+  const tmuxIds = new Map([['real-$1', tmuxId]]);
+
+  assert.deepEqual(computeIdleStep(target(), names, lineage, tmuxIds, () => false), {
+    type: 'resolving',
+    targetId: 'real-$1',
+  });
+});
+
+test('computeIdleStep ignores a non-lineage same-name replacement row', () => {
+  const names = new Map([['unrelated-$2', tmuxName]]);
+  const lineage = new Set<string>();
+  const tmuxIds = new Map([['unrelated-$2', '$2']]);
+
+  assert.deepEqual(computeIdleStep(target(), names, lineage, tmuxIds, () => false), { type: 'idle' });
 });
 
 test('computeIdleStep stays idle when stale debounce candidates were captured at open time', () => {
