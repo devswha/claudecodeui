@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
+import { ImagePlus, X } from 'lucide-react';
 
-import { api } from '../../../../utils/api';
+import { api, authenticatedFetch } from '../../../../utils/api';
 import { requestLivePollBoost } from '../../../../utils/livePollBoost';
 
 type RelayStatus =
@@ -10,11 +11,20 @@ type RelayStatus =
   | { kind: 'queued'; text: string }
   | { kind: 'error'; text: string };
 
+// Mirrors the assets endpoint's `upload.array('images', 5)` limit.
+const MAX_ATTACHED_IMAGES = 5;
+
 /**
  * Composer for a live (read-only) session. It does NOT inject into the
  * conversation — it relays the message to the control tower's /send (via the
  * server proxy), which owns outbox/queueing + injection + verification. Shows
  * delivered / queued / error feedback based on the tower's response.
+ *
+ * Image attachments ride the text-only relay as FILE PATHS: uploads go to the
+ * global assets store (POST /api/assets/images — same as the native chat
+ * composer), and the relayed message references the stored absolute paths.
+ * The gjc in the pane opens them with its multimodal read tool; the tower
+ * cannot carry binary data into a terminal, so this is the whole mechanism.
  *
  * The status line leads with the session's CURRENT MODEL (from the gjc
  * transcript's last model_change, threaded through the live poll) — the tmux
@@ -22,11 +32,33 @@ type RelayStatus =
  */
 export default function LiveRelayComposer({ tmuxName, tmuxId = null, model = null }: { tmuxName: string; tmuxId?: string | null; model?: string | null }) {
   const [input, setInput] = useState('');
+  const [attached, setAttached] = useState<File[]>([]);
   const [status, setStatus] = useState<RelayStatus>({ kind: 'idle' });
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const addFiles = (files: Iterable<File>) => {
+    const images = [...files].filter((file) => file.type.startsWith('image/'));
+    if (images.length === 0) {
+      return;
+    }
+    setAttached((prev) => [...prev, ...images].slice(0, MAX_ATTACHED_IMAGES));
+  };
+
+  const uploadAttachments = async (): Promise<string[] | null> => {
+    const formData = new FormData();
+    attached.forEach((file) => formData.append('images', file));
+    const response = await authenticatedFetch('/api/assets/images', { method: 'POST', headers: {}, body: formData });
+    if (!response.ok) {
+      return null;
+    }
+    const result = await response.json().catch(() => null) as { images?: Array<{ path?: string }> } | null;
+    const paths = (result?.images ?? []).map((image) => image?.path).filter((p): p is string => typeof p === 'string');
+    return paths.length === attached.length ? paths : null;
+  };
 
   const send = async () => {
-    const message = input.trim();
-    if (!message || status.kind === 'sending') {
+    const text = input.trim();
+    if ((!text && attached.length === 0) || status.kind === 'sending') {
       return;
     }
     // Server contract: the $N generation token is required (fail-closed). No
@@ -37,6 +69,16 @@ export default function LiveRelayComposer({ tmuxName, tmuxId = null, model = nul
     }
     setStatus({ kind: 'sending' });
     try {
+      let message = text;
+      if (attached.length > 0) {
+        const paths = await uploadAttachments();
+        if (!paths) {
+          setStatus({ kind: 'error', text: '이미지 업로드 실패 — 전송 취소됨' });
+          return;
+        }
+        const block = `[첨부 이미지 ${paths.length}장 — read 도구로 열어 확인:\n${paths.map((p) => `- ${p}`).join('\n')}]`;
+        message = text ? `${text}\n\n${block}` : block;
+      }
       const response = await api.liveSessionSend(tmuxName, message, tmuxId);
       const body = await response.json().catch(() => null);
       const data = (body?.data ?? body ?? {}) as { ok?: boolean; reachable?: boolean; queued?: boolean; detail?: string };
@@ -51,6 +93,7 @@ export default function LiveRelayComposer({ tmuxName, tmuxId = null, model = nul
         return;
       }
       setInput('');
+      setAttached([]);
       setStatus(data.queued ? { kind: 'queued', text: '대기열 적재됨' } : { kind: 'ok', text: '전달됨' });
       // The user is now watching for the pane's reaction (idle→live transition,
       // new transcript activity) — poll fast for a short window.
@@ -77,10 +120,60 @@ export default function LiveRelayComposer({ tmuxName, tmuxId = null, model = nul
             <span className={status.kind === 'error' ? 'text-red-500' : 'text-muted-foreground'}>· {status.text}</span>
           )}
         </div>
+        {attached.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {attached.map((file, index) => (
+              <span
+                key={`${file.name}-${index}`}
+                className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/40 px-1.5 py-0.5 text-[11px] text-muted-foreground"
+              >
+                <span className="max-w-40 truncate">{file.name}</span>
+                <button
+                  type="button"
+                  aria-label="첨부 제거"
+                  onClick={() => setAttached((prev) => prev.filter((_, i) => i !== index))}
+                  className="text-muted-foreground transition-colors hover:text-red-500"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
         <div className="flex items-end gap-2 rounded-xl border border-border bg-card p-2">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            className="hidden"
+            onChange={(event) => {
+              if (event.target.files) {
+                addFiles(event.target.files);
+              }
+              event.target.value = '';
+            }}
+          />
+          <button
+            type="button"
+            aria-label="이미지 첨부"
+            title="이미지 첨부 (붙여넣기도 가능) — 파일로 저장돼 세션이 읽습니다"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={status.kind === 'sending' || attached.length >= MAX_ATTACHED_IMAGES}
+            className="shrink-0 rounded-lg p-2 text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <ImagePlus className="h-4 w-4" />
+          </button>
           <textarea
             value={input}
             onChange={(event) => setInput(event.target.value)}
+            onPaste={(event) => {
+              const files = [...event.clipboardData.files];
+              if (files.some((file) => file.type.startsWith('image/'))) {
+                event.preventDefault();
+                addFiles(files);
+              }
+            }}
             onKeyDown={(event) => {
               if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
                 event.preventDefault();
@@ -94,7 +187,7 @@ export default function LiveRelayComposer({ tmuxName, tmuxId = null, model = nul
           <button
             type="button"
             onClick={() => void send()}
-            disabled={!input.trim() || status.kind === 'sending'}
+            disabled={(!input.trim() && attached.length === 0) || status.kind === 'sending'}
             className="shrink-0 rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition-colors hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {status.kind === 'sending' ? '전송 중…' : '전송'}
