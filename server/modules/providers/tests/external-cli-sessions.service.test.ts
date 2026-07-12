@@ -25,6 +25,29 @@ test('parsePsTree parses pid,ppid,comm rows and tolerates the header', () => {
   ]);
 });
 
+test('parsePsTree normalizes macOS full-path comm to basename (실측 shape)', () => {
+  // macOS `ps -eo comm` prints executable paths (may contain spaces); Linux prints bare names.
+  const out = parsePsTree([
+    '  PID  PPID COMM',
+    '21852 21706 /Applications/ChatGPT.app/Contents/Resources/codex',
+    '21995 21706 /Users/dev/.codex/computer-use/Codex Computer Use.app/Contents/MacOS/SkyComputerUseService',
+    '89726 89725 bun',
+  ].join('\n'));
+  assert.deepEqual(out, [
+    { pid: 21852, ppid: 21706, comm: 'codex' },
+    { pid: 21995, ppid: 21706, comm: 'SkyComputerUseService' },
+    { pid: 89726, ppid: 89725, comm: 'bun' },
+  ]);
+});
+
+test('classifyExternalSessions: macOS full-path codex descendant still classifies via basename', () => {
+  const result = classifyExternalSessions({
+    panes: parseExternalPanes('gpt\t21706\tzsh\n'),
+    procs: parsePsTree('21706     1 zsh\n21852 21706 /Applications/ChatGPT.app/Contents/Resources/codex\n'),
+  });
+  assert.deepEqual(result, [{ tmuxName: 'gpt', kind: 'codex' }]);
+});
+
 test('classifyExternalSessions: claude pane by pane_current_command (실측 shape)', () => {
   const result = classifyExternalSessions({
     panes: [{ name: 'patina', pid: 113501, command: 'claude' }],
