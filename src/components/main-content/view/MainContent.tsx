@@ -3,6 +3,7 @@ import { Menu, SquareTerminal, X } from 'lucide-react';
 
 import ChatInterface from '../../chat/view/ChatInterface';
 import LiveRelayComposer from '../../chat/view/subcomponents/LiveRelayComposer';
+import { isSafeDisplayTmuxName } from '../../../shared/tmuxSessionName';
 import { composerKey } from '../../app/idleTransition';
 import PluginTabContent from '../../plugins/view/PluginTabContent';
 import StandaloneShell from '../../standalone-shell/view/StandaloneShell';
@@ -175,7 +176,7 @@ function MainContent({
   // same footprint as a gjc session. Rendered before the no-project empty state
   // because the target carries its own project (PTY cwd only).
   if (externalTerminal) {
-    const safeName = /^[A-Za-z0-9._-]{1,64}$/.test(externalTerminal.tmuxName) ? externalTerminal.tmuxName : null;
+    const safeName = isSafeDisplayTmuxName(externalTerminal.tmuxName) ? externalTerminal.tmuxName : null;
     return (
       <div className="flex h-full flex-col">
         <div className="flex flex-shrink-0 items-center justify-between border-b border-border/50 px-3 py-2">
@@ -227,7 +228,7 @@ function MainContent({
     );
   }
   if (idleTarget) {
-    const safeName = /^[A-Za-z0-9._-]{1,64}$/.test(idleTarget.tmuxName) ? idleTarget.tmuxName : null;
+    const safeName = isSafeDisplayTmuxName(idleTarget.tmuxName) ? idleTarget.tmuxName : null;
     return (
       <div className="flex h-full flex-col">
         <div className="flex flex-shrink-0 items-center justify-between border-b border-border/50 px-3 py-2">

@@ -3,15 +3,14 @@ import { Plus } from 'lucide-react';
 
 import { api } from '../../../../utils/api';
 import HomeDirInput from '../../../../shared/view/HomeDirInput';
+import { SPAWN_NAME_RE } from '../../../../shared/tmuxSessionName';
 
 type SpawnStatus =
   | { kind: 'idle' }
   | { kind: 'spawning' }
-  | { kind: 'ok'; text: string }
   | { kind: 'error'; text: string };
-// Mirrors the tower's NAME_RE — validating here turns the tower's English 400
-// ("invalid session name") into an actionable Korean message before any request.
-const SPAWN_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+// The tower's English 400 ("invalid session name") becomes this actionable
+// Korean message, checked client-side before any request (rule: SPAWN_NAME_RE).
 const NAME_RULE_TEXT = '이름은 영문·숫자로 시작, 영문·숫자·. _ - 만 (공백·/ 불가)';
 
 // A new gjc session is created through the control tower's /spawn (proxied by the
@@ -100,8 +99,8 @@ export default function SidebarSpawnSession() {
         placeholder="작업 폴더 (예: aegis-alpha, workspace/my-proj)"
         scope="spawn"
       />
-      {status.kind !== 'idle' && status.kind !== 'spawning' && (
-        <p className={status.kind === 'error' ? 'text-[11px] text-red-500' : 'text-[11px] text-blue-600 dark:text-blue-400'}>
+      {status.kind === 'error' && (
+        <p className="text-[11px] text-red-500">
           {status.text}
         </p>
       )}
