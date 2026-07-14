@@ -9,6 +9,7 @@ import {
   parseLastModelChange,
   parseLsofPidSessions,
   parseTmuxPanes,
+  pickPaneReceipt,
   tmuxHasPanes,
 } from '@/modules/providers/services/live-sessions.service.js';
 
@@ -345,4 +346,48 @@ test('IDLE_GJC_ID_PREFIX cannot collide with transcript uuids (client contract)'
   // uuid-ish token and can never start with it.
   assert.equal(IDLE_GJC_ID_PREFIX, 'idle-gjc:');
   assert.ok(!/^[0-9a-fA-F-]+$/.test(IDLE_GJC_ID_PREFIX));
+});
+
+test('pickPaneReceipt picks the newest receipt matching the pane cwd', () => {
+  const receipts = [
+    { sessionId: 'old-1', cwd: '/ws', sessionFile: '/t/old.jsonl', mtimeMs: 1_000 },
+    { sessionId: 'new-1', cwd: '/ws', sessionFile: '/t/new.jsonl', mtimeMs: 5_000 },
+    { sessionId: 'foreign', cwd: '/elsewhere', sessionFile: '/t/f.jsonl', mtimeMs: 9_000 },
+  ];
+  assert.equal(
+    pickPaneReceipt({ paneCwd: '/ws', paneStartMs: null, receipts })?.sessionId,
+    'new-1',
+  );
+});
+
+test('pickPaneReceipt rejects receipts older than the pane process (stale headless run)', () => {
+  // A finished headless gjc left this receipt BEFORE the pane existed — it must
+  // never capture the new pane.
+  const stale = [{ sessionId: 'stale', cwd: '/ws', sessionFile: '/t/s.jsonl', mtimeMs: 1_000 }];
+  assert.equal(pickPaneReceipt({ paneCwd: '/ws', paneStartMs: 2_000, receipts: stale }), null);
+  // …but the pane-start floor admits receipts written after the pane came up.
+  const fresh = [{ sessionId: 'live', cwd: '/ws', sessionFile: '/t/l.jsonl', mtimeMs: 3_000 }];
+  assert.equal(
+    pickPaneReceipt({ paneCwd: '/ws', paneStartMs: 2_000, receipts: fresh })?.sessionId,
+    'live',
+  );
+});
+
+test('pickPaneReceipt requires a session id and an existing transcript path', () => {
+  assert.equal(
+    pickPaneReceipt({
+      paneCwd: '/ws',
+      paneStartMs: null,
+      receipts: [
+        { sessionId: '', cwd: '/ws', sessionFile: '/t/x.jsonl', mtimeMs: 1 },
+        { sessionId: 'no-file', cwd: '/ws', sessionFile: null, mtimeMs: 2 },
+      ],
+    }),
+    null,
+  );
+});
+
+test('pickPaneReceipt tolerates a null receipt cwd (older gjc builds) but never a mismatch', () => {
+  const receipts = [{ sessionId: 'null-cwd', cwd: null, sessionFile: '/t/n.jsonl', mtimeMs: 4 }];
+  assert.equal(pickPaneReceipt({ paneCwd: '/ws', paneStartMs: null, receipts })?.sessionId, 'null-cwd');
 });

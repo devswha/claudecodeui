@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { open, readFile, realpath, stat } from 'node:fs/promises';
+import { open, readdir, readFile, realpath, stat } from 'node:fs/promises';
 
 import { parsePsTree } from './external-cli-sessions.service.js';
 
@@ -358,6 +358,100 @@ async function readParentPid(pid: number): Promise<number | null> {
   }
 }
 
+// ── Runtime-receipt lane ─────────────────────────────────────────────────────
+// gjc 0.10.2 keeps NO open fd on its transcript while idle (open-append-close), so
+// the lsof lane misses quiet TUI sessions entirely (실측 2026-07-14: gjc-app pane —
+// transcript on disk, `lsof -c gjc` silent → the app fell to the read-only banner
+// with no relay composer). gjc itself leaves an authoritative per-session receipt
+// under the pane's cwd, rewritten on every turn event:
+//   <cwd>/.gjc/_session-<id>/runtime/runtime-state.json
+//     { session_id, cwd, session_file, ... }
+// For a pane already PROVEN to run gjc in its subtree (the same evidence grade the
+// synthetic idle rows use to permit kill/relay), the newest receipt that (a) points
+// at this cwd, (b) has an existing transcript, and (c) is not older than the pane
+// process binds pane↔session as a lineage claim. Bare cwd equality alone still
+// never grants lineage — the patina-실사고 guard in computeLiveSessions is untouched.
+
+export type RuntimeReceipt = {
+  sessionId: string;
+  cwd: string | null;
+  sessionFile: string | null;
+  mtimeMs: number;
+};
+
+/** Pure pick: newest receipt for this pane, guarded by cwd match + pane-start floor. */
+export function pickPaneReceipt(args: {
+  paneCwd: string;
+  paneStartMs: number | null;
+  receipts: RuntimeReceipt[];
+}): RuntimeReceipt | null {
+  let best: RuntimeReceipt | null = null;
+  for (const receipt of args.receipts) {
+    if (!receipt.sessionId || !receipt.sessionFile) {
+      continue;
+    }
+    if (receipt.cwd !== null && receipt.cwd !== args.paneCwd) {
+      continue;
+    }
+    // A receipt written before the pane process existed belongs to an EARLIER
+    // session in this cwd (e.g. a finished headless run) — never capture the pane.
+    if (args.paneStartMs !== null && receipt.mtimeMs < args.paneStartMs) {
+      continue;
+    }
+    if (!best || receipt.mtimeMs > best.mtimeMs) {
+      best = receipt;
+    }
+  }
+  return best;
+}
+
+// A workspace .gjc dir accumulates one _session-* dir per session; cap the scan so
+// a pathological directory cannot stall the live poll.
+const RUNTIME_RECEIPT_DIR_LIMIT = 512;
+
+/** Reads all parseable session receipts under `<paneCwd>/.gjc` (missing dir → []). */
+async function readPaneRuntimeReceipts(paneCwd: string): Promise<RuntimeReceipt[]> {
+  let entries: string[];
+  try {
+    entries = await readdir(`${paneCwd}/.gjc`);
+  } catch {
+    return [];
+  }
+  const receipts: RuntimeReceipt[] = [];
+  for (const entry of entries.slice(0, RUNTIME_RECEIPT_DIR_LIMIT)) {
+    if (!entry.startsWith('_session-')) {
+      continue;
+    }
+    const statePath = `${paneCwd}/.gjc/${entry}/runtime/runtime-state.json`;
+    try {
+      const [content, meta] = await Promise.all([readFile(statePath, 'utf8'), stat(statePath)]);
+      const parsed = JSON.parse(content) as { session_id?: unknown; cwd?: unknown; session_file?: unknown };
+      const sessionFile = typeof parsed.session_file === 'string' ? parsed.session_file : null;
+      if (sessionFile !== null) {
+        await stat(sessionFile); // the transcript must exist — throws (→ skip) otherwise
+      }
+      receipts.push({
+        sessionId: typeof parsed.session_id === 'string' ? parsed.session_id : '',
+        cwd: typeof parsed.cwd === 'string' ? ((await safeRealpath(parsed.cwd)) ?? parsed.cwd) : null,
+        sessionFile,
+        mtimeMs: meta.mtimeMs,
+      });
+    } catch {
+      // unreadable/corrupt receipt or missing transcript — skip this candidate
+    }
+  }
+  return receipts;
+}
+
+/** /proc/<pid> dir mtime ≈ process start — the cheap stale-receipt floor. */
+async function processStartMs(pid: number): Promise<number | null> {
+  try {
+    return (await stat(`/proc/${pid}`)).mtimeMs;
+  } catch {
+    return null;
+  }
+}
+
 /** Walks the ancestor pid chain [pid, ppid, …] toward init (depth/cycle guarded). */
 async function buildPidChain(pid: number): Promise<number[]> {
   const chain: number[] = [];
@@ -566,9 +660,50 @@ async function scanLiveGjcSessions(): Promise<LiveGjcScanResult> {
     // ignore — the idle lane is additive
   }
 
+  // Runtime-receipt lane (gjc 0.10.2: idle gjc holds no transcript fd — see the
+  // lane comment above pickPaneReceipt). Upgrade subtree-proven gjc panes, which
+  // would otherwise stay synthetic idle rows, to transcript-backed lineage rows
+  // via gjc's own session receipt in the pane cwd. lsof lineage always wins —
+  // this lane only binds ids no lsof claim reached.
+  const claimedIds = new Set(
+    named.flatMap((session) => (session.tmuxName !== null ? [session.id] : [])),
+  );
+  const upgradedRows: typeof named = [];
+  const remainingIdlePanes: typeof idlePanes = [];
+  for (const idle of idlePanes) {
+    let bound = false;
+    for (const pane of panes.filter((candidate) => candidate.sid === idle.sid)) {
+      const receipt = pickPaneReceipt({
+        paneCwd: pane.cwd,
+        paneStartMs: await processStartMs(pane.pid),
+        receipts: await readPaneRuntimeReceipts(pane.cwd),
+      });
+      if (!receipt || claimedIds.has(receipt.sessionId)) {
+        continue;
+      }
+      claimedIds.add(receipt.sessionId);
+      // Subtree-proven pane + gjc-authored receipt = lineage-grade evidence
+      // (identical rationale to the synthetic idle rows below).
+      upgradedRows.push({ id: receipt.sessionId, tmuxName: idle.name, tmuxId: idle.sid, claim: 'lineage', kind: idle.kind });
+      if (receipt.sessionFile !== null) {
+        sessionPaths.set(receipt.sessionId, receipt.sessionFile);
+      }
+      bound = true;
+      break;
+    }
+    if (!bound) {
+      remainingIdlePanes.push(idle);
+    }
+  }
+  // An lsof row may exist claimless for the same id (holder seen, pane unresolved) —
+  // the upgraded row supersedes it.
+  const namedFinal = named.filter(
+    (session) => !(session.tmuxName === null && upgradedRows.some((upgraded) => upgraded.id === session.id)),
+  );
+
   // Enrich with the current model (last model_change in the transcript tail).
   const enriched = await Promise.all(
-    named.map(async (session) => {
+    [...namedFinal, ...upgradedRows].map(async (session) => {
       const path = sessionPaths.get(session.id);
       return { ...session, model: path ? await readLastModelFromFile(path) : null };
     }),
@@ -576,7 +711,7 @@ async function scanLiveGjcSessions(): Promise<LiveGjcScanResult> {
   return {
     sessions: [
       ...enriched,
-      ...idlePanes.map(({ name, sid, kind }) => ({
+      ...remainingIdlePanes.map(({ name, sid, kind }) => ({
         id: `${IDLE_GJC_ID_PREFIX}${name}`,
         tmuxName: name,
         tmuxId: sid,
