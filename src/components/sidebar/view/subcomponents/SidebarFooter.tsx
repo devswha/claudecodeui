@@ -1,10 +1,9 @@
 import { Settings, ArrowUpCircle, Bug, AlertTriangle } from 'lucide-react';
 import type { TFunction } from 'i18next';
-import { IS_PLATFORM } from '../../../../constants/config';
 import type { ReleaseInfo } from '../../../../types/sharedTypes';
 
-const GITHUB_ISSUES_URL = 'https://github.com/devswha/claudecodeui/issues/new';
-const GITHUB_REPO_URL = 'https://github.com/devswha/claudecodeui';
+const GITHUB_ISSUES_URL = 'https://github.com/devswha/gajae-app/issues/new';
+const GITHUB_REPO_URL = 'https://github.com/devswha/gajae-app';
 
 const DISCORD_INVITE_URL = 'https://discord.gg/dskZax5JPh';
 
@@ -143,19 +142,17 @@ export default function SidebarFooter({
         </button>
       </div>
 
-      {/* Desktop version brand line (OSS mode only) */}
-      {!IS_PLATFORM && (
-        <div className="hidden px-3 py-2 text-center md:block">
-          <a
-            href={GITHUB_REPO_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-[10px] text-muted-foreground/40 transition-colors hover:text-muted-foreground"
-          >
-            가재코드 v{currentVersion} – {t('branding.openSource')}
-          </a>
-        </div>
-      )}
+      {/* Desktop version brand line */}
+      <div className="hidden px-3 py-2 text-center md:block">
+        <a
+          href={GITHUB_REPO_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-[10px] text-muted-foreground/40 transition-colors hover:text-muted-foreground"
+        >
+          Gajae App v{currentVersion} – {t('branding.openSource')}
+        </a>
+      </div>
 
       {/* Mobile Report Issue */}
       <div className="px-3 pt-3 md:hidden">

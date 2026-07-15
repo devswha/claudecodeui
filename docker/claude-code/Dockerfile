@@ -1,20 +1,20 @@
+# Build from the repository root:
+# docker build --file docker/claude-code/Dockerfile --tag gajae-app-sandbox:claude-code .
 FROM docker/sandbox-templates:claude-code
 
 USER root
-COPY shared/install-cloudcli.sh /tmp/install-cloudcli.sh
-RUN chmod +x /tmp/install-cloudcli.sh && /tmp/install-cloudcli.sh
+WORKDIR /opt/gajae-app
+COPY --chown=agent:agent package.json package-lock.json LICENSE NOTICE ./
+COPY --chown=agent:agent dist ./dist
+COPY --chown=agent:agent dist-server ./dist-server
+COPY --chown=agent:agent public ./public
+COPY --chown=agent:agent shared ./shared
+COPY --chown=agent:agent node_modules ./node_modules
+COPY docker/shared/install-gajae-app.sh /tmp/install-gajae-app.sh
+RUN chmod +x /tmp/install-gajae-app.sh && /tmp/install-gajae-app.sh /opt/gajae-app
+
+COPY --chown=agent:agent docker/shared/start-gajae-app.sh /home/agent/.gajae-app-start.sh
+RUN printf '\n. /home/agent/.gajae-app-start.sh\n' >> /home/agent/.bashrc
 
 USER agent
-RUN --mount=type=cache,target=/tmp/npm-cache,sharing=locked,mode=0777 \
-    npm install -g @cloudcli-ai/cloudcli \
-      --cache=/tmp/npm-cache \
-      --fetch-retries=5 \
-      --fetch-retry-mintimeout=20000 \
-      --fetch-retry-maxtimeout=120000 \
-      --fetch-timeout=600000 \
-      --no-audit \
-      --no-fund && \
-    cloudcli --version
-
-COPY --chown=agent:agent shared/start-cloudcli.sh /home/agent/.cloudcli-start.sh
-RUN echo '. ~/.cloudcli-start.sh' >> /home/agent/.bashrc
+WORKDIR /home/agent

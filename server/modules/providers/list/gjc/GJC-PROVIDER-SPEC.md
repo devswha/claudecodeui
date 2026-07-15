@@ -1,10 +1,10 @@
-# gjc provider — 구현 청사진 (omj, 2026-07-09)
+# gjc provider — 구현 청사진 (Gajae App, 2026-07-09)
 
-CloudCLI(siteboon/claudecodeui)에 5번째 provider `gjc`(Gajae Code) 추가. **1단계 = read-only**(세션 목록 + 대화 열람). 복제 원형 = **codex**(JSONL 스캐너 계열). 업스트림 PR 금지 — devswha fork 개발.
+Gajae App에 provider `gjc`(Gajae Code) 추가. **1단계 = read-only**(세션 목록 + 대화 열람). 구현 참조 = **codex**(JSONL 스캐너 계열). 업스트림 PR 금지 — Gajae App에서 개발.
 
 ## 세션 스토어 (실측)
 - 위치: `$HOME/.gjc/agent/sessions/<cwd-slug>/<ISO-ts>_<uuid>.jsonl`
-  - `<cwd-slug>` = 절대 cwd에서 `$HOME` 스트립 후 `/`→`-`. 예 `/home/devswha/workspace/oh-my-gjc` → `-workspace-oh-my-gjc`. (표시용; **권위 있는 cwd는 JSONL 헤더**.)
+  - `<cwd-slug>` = 절대 cwd에서 `$HOME` 스트립 후 `/`→`-`. 예 `/workspace/gajae-app` → `-workspace-gajae-app`. (표시용; **권위 있는 cwd는 JSONL 헤더**.)
   - 세션당 동명 사이드카 디렉터리(`<...>_<uuid>/`)에 artifacts/resident-cache. **인덱싱은 `.jsonl` 파일만**(사이드카 하위 blob은 확장자 없어 자동 제외).
   - 서브에이전트 세션 = 같은 디렉터리의 형제 `.jsonl`.
 - **JSONL 라인 스키마** (한 줄=한 이벤트, `id`/`parentId` 트리):
@@ -38,6 +38,6 @@ CloudCLI(siteboon/claudecodeui)에 5번째 provider `gjc`(Gajae Code) 추가. **
 
 ## 게이트
 - 실 `$HOME/.gjc` 읽기 전용. 쓰기 실험은 격리 HOME.
-- 프로덕션 cloudcli(:3021) 손대지 말 것 — 별도 포트 dev.
+- 프로덕션 인스턴스 손대지 말 것 — 별도 포트 dev.
 - 체크포인트1 = read-only(목록+열람) 되면 스크린샷 + 관제 큐 보고 → 리뷰 후 live.
 - 기존 4 provider 무회귀.

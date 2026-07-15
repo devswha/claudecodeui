@@ -1,60 +1,34 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
-function isCloudCliAppOrigin(location) {
-  if (location.protocol === 'file:') return true;
+const IPC_PREFIX = 'gajae-app-desktop:';
 
-  if (location.protocol === 'http:') {
-    return location.hostname === '127.0.0.1' || location.hostname === 'localhost';
-  }
-
-  return location.protocol === 'https:' && (
-    location.hostname === 'cloudcli.ai' || location.hostname.endsWith('.cloudcli.ai')
-  );
+function invoke(action, ...args) {
+  return ipcRenderer.invoke(`${IPC_PREFIX}${action}`, ...args);
 }
 
-function onDesktopStateUpdated(callback) {
+function onStateChanged(callback) {
+  if (typeof callback !== 'function') {
+    throw new TypeError('State change listener must be a function.');
+  }
+
   const listener = (_event, state) => callback(state);
-  ipcRenderer.on('cloudcli-desktop:state-updated', listener);
+  ipcRenderer.on(`${IPC_PREFIX}state:changed`, listener);
   return () => {
-    ipcRenderer.removeListener('cloudcli-desktop:state-updated', listener);
+    ipcRenderer.removeListener(`${IPC_PREFIX}state:changed`, listener);
   };
 }
 
-if (isCloudCliAppOrigin(window.location)) {
-  contextBridge.exposeInMainWorld('cloudcliDesktopNotifications', {
-    getState: () => ipcRenderer.invoke('cloudcli-desktop:get-state'),
-    update: (settings) => ipcRenderer.invoke('cloudcli-desktop:update-desktop-notifications', settings),
-    onStateUpdated: onDesktopStateUpdated,
-  });
-}
-
 if (window.location.protocol === 'file:') {
-  contextBridge.exposeInMainWorld('cloudcliDesktop', {
-    connectCloud: () => ipcRenderer.invoke('cloudcli-desktop:connect-cloud'),
-    disconnectCloud: () => ipcRenderer.invoke('cloudcli-desktop:disconnect-cloud'),
-    copyDiagnostics: () => ipcRenderer.invoke('cloudcli-desktop:copy-diagnostics'),
-    copyLocalWebUrl: () => ipcRenderer.invoke('cloudcli-desktop:copy-local-web-url'),
-    getState: () => ipcRenderer.invoke('cloudcli-desktop:get-state'),
-    openCloudDashboard: () => ipcRenderer.invoke('cloudcli-desktop:open-cloud-dashboard'),
-    openEnvironment: (environmentId) => ipcRenderer.invoke('cloudcli-desktop:open-environment', environmentId),
-    runActiveEnvironmentAction: (action) => ipcRenderer.invoke('cloudcli-desktop:run-active-environment-action', action),
-    openLocal: () => ipcRenderer.invoke('cloudcli-desktop:open-local'),
-    openLocalWebUi: () => ipcRenderer.invoke('cloudcli-desktop:open-local-web-ui'),
-    refreshEnvironments: () => ipcRenderer.invoke('cloudcli-desktop:refresh-environments'),
-    refreshActiveTab: () => ipcRenderer.invoke('cloudcli-desktop:reload-active-tab'),
-    showEnvironmentPicker: () => ipcRenderer.invoke('cloudcli-desktop:show-environment-picker'),
-    showLauncher: () => ipcRenderer.invoke('cloudcli-desktop:show-launcher'),
-    showLocalSettings: () => ipcRenderer.invoke('cloudcli-desktop:show-local-settings'),
-    showDesktopSettings: () => ipcRenderer.invoke('cloudcli-desktop:show-desktop-settings'),
-    closeSettingsWindow: () => ipcRenderer.invoke('cloudcli-desktop:close-settings-window'),
-    showActiveEnvironmentActionsMenu: () => ipcRenderer.invoke('cloudcli-desktop:show-active-environment-actions-menu'),
-    showEnvironmentActionsMenu: (environmentId) => ipcRenderer.invoke('cloudcli-desktop:show-environment-actions-menu', environmentId),
-    switchTab: (tabId) => ipcRenderer.invoke('cloudcli-desktop:switch-tab', tabId),
-    closeTab: (tabId) => ipcRenderer.invoke('cloudcli-desktop:close-tab', tabId),
-    updateSetting: (key, value) => ipcRenderer.invoke('cloudcli-desktop:update-setting', key, value),
-    onStateUpdated: onDesktopStateUpdated,
-    onLauncherCommand: (callback) => {
-      ipcRenderer.on('cloudcli-desktop:launcher-command', (_event, command) => callback(command));
-    },
+  contextBridge.exposeInMainWorld('gajaeAppDesktop', {
+    getState: () => invoke('state:get'),
+    onStateChanged,
+    openLocal: () => invoke('local:open'),
+    listRemoteServers: () => invoke('remote-servers:list'),
+    createRemoteServer: (server) => invoke('remote-servers:create', server),
+    updateRemoteServer: (targetId, input) => invoke('remote-servers:update', { id: targetId, ...input }),
+    deleteRemoteServer: (targetId) => invoke('remote-servers:delete', targetId),
+    testRemoteServer: (targetId) => invoke('remote-servers:test', targetId),
+    openRemoteServer: (targetId) => invoke('remote-servers:open', targetId),
+    selectRemoteServer: (targetId) => invoke('remote-servers:select', targetId),
   });
 }

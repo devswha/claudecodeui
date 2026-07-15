@@ -10,21 +10,11 @@ import { ServerInstaller } from './serverInstaller.js';
 const DEFAULT_PORT = 3001;
 const HOST = '127.0.0.1';
 const DISPLAY_HOST = 'localhost';
-const HEALTH_TIMEOUT_MS = 1000;
+const HEALTH_TIMEOUT_MS = 3000;
 const SERVER_START_TIMEOUT_MS = 30000;
 const MAX_STARTUP_LOG_LINES = 300;
-const SERVER_MARKER_PATH = path.join(os.homedir(), '.cloudcli', 'local-server.json');
-const LOCAL_SERVER_URL_ENV_KEYS = [
-  'CLOUDCLI_DESKTOP_LOCAL_SERVER_URL',
-  'CLOUDCLI_LOCAL_SERVER_URL',
-  'ELECTRON_LOCAL_SERVER_URL',
-];
-const LOCAL_SERVER_PORT_ENV_KEYS = [
-  'CLOUDCLI_DESKTOP_LOCAL_SERVER_PORT',
-  'CLOUDCLI_SERVER_PORT',
-  'SERVER_PORT',
-  'PORT',
-];
+const LOCAL_SERVER_URL_ENV = 'GAJAE_APP_LOCAL_SERVER_URL';
+const LOCAL_SERVER_PORT_ENV = 'GAJAE_APP_LOCAL_SERVER_PORT';
 
 function requestJson(url, timeoutMs = HEALTH_TIMEOUT_MS) {
   return new Promise((resolve) => {
@@ -55,11 +45,9 @@ function requestJson(url, timeoutMs = HEALTH_TIMEOUT_MS) {
   });
 }
 
-async function isCloudCliServer(baseUrl) {
+async function isGajaeAppServer(baseUrl) {
   const response = await requestJson(`${baseUrl}/health`);
-  return response.ok
-    && response.json?.status === 'ok'
-    && typeof response.json?.installMode === 'string';
+  return response.ok && response.json?.status === 'ok';
 }
 
 function isPortAvailable(port, host = HOST) {
@@ -88,20 +76,9 @@ function getFreePort() {
   });
 }
 
-async function chooseServerPort(host) {
-  if (await isPortAvailable(DEFAULT_PORT, host)) {
-    return DEFAULT_PORT;
-  }
-
-  return getFreePort();
-}
-
 function getDesktopPath() {
   const currentPath = process.env.PATH || '';
   const home = os.homedir();
-  // GUI-launched apps inherit a minimal PATH (especially on macOS), which misses
-  // per-user tool dirs. gjc typically lives in ~/.local/bin (or ~/.bun/bin), and the
-  // embedded server spawns it via PATH — so augment with the common per-user dirs too.
   const commonPaths = process.platform === 'win32'
     ? []
     : [
@@ -114,8 +91,8 @@ function getDesktopPath() {
 }
 
 function getNodeRuntime(usePackagedElectronRuntime) {
-  if (process.env.ELECTRON_NODE_PATH) {
-    return { command: process.env.ELECTRON_NODE_PATH, env: {}, label: 'ELECTRON_NODE_PATH' };
+  if (process.env.GAJAE_APP_NODE_PATH) {
+    return { command: process.env.GAJAE_APP_NODE_PATH, env: {}, label: 'GAJAE_APP_NODE_PATH' };
   }
 
   if (usePackagedElectronRuntime && process.versions.electron) {
@@ -137,136 +114,60 @@ function stripTrailingSlash(value) {
   return value.endsWith('/') ? value.slice(0, -1) : value;
 }
 
-function addCandidateUrl(urls, rawUrl) {
-  if (!rawUrl) return;
-  try {
-    const parsed = new URL(String(rawUrl));
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return;
-    parsed.hash = '';
-    parsed.search = '';
-    const normalized = stripTrailingSlash(parsed.toString());
-    if (!urls.includes(normalized)) urls.push(normalized);
-  } catch {
-    // Ignore invalid user-provided discovery values.
-  }
+function getDisplayUrl(baseUrl) {
+  const parsed = new URL(baseUrl);
+  if (parsed.hostname === HOST) parsed.hostname = DISPLAY_HOST;
+  return stripTrailingSlash(parsed.toString());
 }
 
-// Normalizes the user-configured remote server URL setting: keep only valid
-// http(s) URLs (trimmed, no trailing slash); anything else becomes '' (local mode).
-function normalizeRemoteServerUrl(rawUrl) {
-  if (typeof rawUrl !== 'string' || !rawUrl.trim()) return '';
-  try {
-    const parsed = new URL(rawUrl.trim());
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return '';
-    parsed.hash = '';
-    parsed.search = '';
+function isLoopbackHost(hostname) {
+  return hostname === HOST || hostname === DISPLAY_HOST || hostname === '[::1]';
+}
+
+function getConfiguredLocalUrl() {
+  const rawUrl = process.env[LOCAL_SERVER_URL_ENV];
+  if (rawUrl && rawUrl.trim()) {
+    let parsed;
+    try {
+      parsed = new URL(rawUrl.trim());
+    } catch {
+      throw new Error(`${LOCAL_SERVER_URL_ENV} must be a valid loopback HTTP URL.`);
+    }
+
+    if (
+      parsed.protocol !== 'http:'
+      || !isLoopbackHost(parsed.hostname)
+      || parsed.username
+      || parsed.password
+      || parsed.pathname !== '/'
+      || parsed.search
+      || parsed.hash
+    ) {
+      throw new Error(`${LOCAL_SERVER_URL_ENV} must be a loopback HTTP origin without credentials or a path.`);
+    }
+
     return stripTrailingSlash(parsed.toString());
-  } catch {
-    return '';
   }
-}
 
-function addCandidatePort(urls, rawPort) {
-  const port = Number.parseInt(String(rawPort || ''), 10);
-  if (!Number.isInteger(port) || port < 1 || port > 65535) return;
-  addCandidateUrl(urls, `http://${HOST}:${port}`);
+  const rawPort = process.env[LOCAL_SERVER_PORT_ENV];
+  if (!rawPort) return `http://${HOST}:${DEFAULT_PORT}`;
+  const port = Number.parseInt(rawPort, 10);
+  if (!Number.isInteger(port) || port < 1 || port > 65535 || String(port) !== rawPort) {
+    throw new Error(`${LOCAL_SERVER_PORT_ENV} must be an integer between 1 and 65535.`);
+  }
+  return `http://${HOST}:${port}`;
 }
 
 function getPortFromUrl(baseUrl) {
-  try {
-    const parsed = new URL(baseUrl);
-    if (parsed.port) return Number.parseInt(parsed.port, 10);
-    return parsed.protocol === 'https:' ? 443 : 80;
-  } catch {
-    return null;
-  }
+  const parsed = new URL(baseUrl);
+  return parsed.port ? Number.parseInt(parsed.port, 10) : 80;
 }
 
-function getDisplayUrl(baseUrl) {
-  try {
-    const parsed = new URL(baseUrl);
-    if (parsed.hostname === HOST) {
-      parsed.hostname = DISPLAY_HOST;
-    }
-    return stripTrailingSlash(parsed.toString());
-  } catch {
-    return baseUrl;
-  }
-}
-
-async function pathExists(filePath) {
-  try {
-    await fs.access(filePath);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function readServerBundleConfig(appRoot) {
-  try {
-    const raw = await fs.readFile(path.join(appRoot, 'electron', 'server-bundle-config.json'), 'utf8');
-    const config = JSON.parse(raw);
-    return {
-      releaseTag: typeof config.releaseTag === 'string' && config.releaseTag.trim()
-        ? config.releaseTag.trim()
-        : '',
-    };
-  } catch {
-    return { releaseTag: '' };
-  }
-}
-
-function getServerCwd(appRoot, serverEntry) {
-  const normalizedEntry = path.resolve(serverEntry);
-  const bundledEntry = path.resolve(appRoot, 'dist-server', 'server', 'index.js');
-  if (normalizedEntry === bundledEntry) {
-    return appRoot;
-  }
-
-  // Installed server entries are laid out as <root>/dist-server/server/index.js.
-  return path.resolve(path.dirname(normalizedEntry), '..', '..');
-}
-
-async function readServerMarkerUrl() {
-  try {
-    const raw = await fs.readFile(SERVER_MARKER_PATH, 'utf8');
-    const marker = JSON.parse(raw);
-    return marker.url || (marker.port ? `http://${marker.host || HOST}:${marker.port}` : null);
-  } catch {
-    return null;
-  }
-}
-
-async function getExistingServerCandidateUrls(defaultUrl, remoteServerUrl) {
-  const urls = [];
-
-  // Explicit user-configured remote server (e.g. a Linux box over Tailscale) wins:
-  // the desktop app then attaches instead of spawning a local server, so Windows
-  // machines without gjc still get the full session/terminal experience remotely.
-  addCandidateUrl(urls, remoteServerUrl);
-
-  for (const key of LOCAL_SERVER_URL_ENV_KEYS) {
-    addCandidateUrl(urls, process.env[key]);
-  }
-
-  addCandidateUrl(urls, await readServerMarkerUrl());
-
-  for (const key of LOCAL_SERVER_PORT_ENV_KEYS) {
-    addCandidatePort(urls, process.env[key]);
-  }
-
-  addCandidateUrl(urls, defaultUrl);
-  return urls;
-}
-
-async function waitForCloudCliServer(baseUrl, timeoutMs) {
+async function waitForGajaeAppServer(baseUrl, timeoutMs) {
   const startedAt = Date.now();
 
   while (Date.now() - startedAt < timeoutMs) {
-    if (await isCloudCliServer(baseUrl)) {
-      return true;
-    }
+    if (await isGajaeAppServer(baseUrl)) return true;
     await new Promise((resolve) => setTimeout(resolve, 300));
   }
 
@@ -286,8 +187,6 @@ export class LocalServerController {
     this.startupLogs = [];
     this.desktopSettings = {
       keepLocalServerRunning: false,
-      exposeLocalServerOnNetwork: false,
-      remoteServerUrl: '',
       themeMode: 'system',
     };
   }
@@ -297,6 +196,10 @@ export class LocalServerController {
   }
 
   getLocalServerUrl() {
+    return this.localServerUrl;
+  }
+
+  getShareableWebUrl() {
     return this.localServerUrl;
   }
 
@@ -321,38 +224,17 @@ export class LocalServerController {
   }
 
   getPendingTarget() {
+    let url = `http://${DISPLAY_HOST}:${DEFAULT_PORT}`;
+    try {
+      url = getDisplayUrl(getConfiguredLocalUrl());
+    } catch {
+      // The explicit Open action reports malformed configuration.
+    }
     return {
       kind: 'local',
-      name: 'Local CloudCLI',
-      url: this.localServerUrl || `http://${DISPLAY_HOST}:${this.localServerPort || DEFAULT_PORT}`,
+      name: 'Gajae App Local',
+      url: this.localServerUrl || url,
     };
-  }
-
-  getLanAddress() {
-    const interfaces = os.networkInterfaces();
-    for (const entries of Object.values(interfaces)) {
-      for (const entry of entries || []) {
-        if (entry.family === 'IPv4' && !entry.internal) {
-          return entry.address;
-        }
-      }
-    }
-    return null;
-  }
-
-  getShareableWebUrl() {
-    if (!this.localServerUrl || !this.localServerPort) return null;
-    if (this.desktopSettings.exposeLocalServerOnNetwork) {
-      const lanAddress = this.getLanAddress();
-      if (lanAddress) {
-        return `http://${lanAddress}:${this.localServerPort}`;
-      }
-    }
-    return this.getLocalServerUrl();
-  }
-
-  getServerBindHost() {
-    return this.desktopSettings.exposeLocalServerOnNetwork ? '0.0.0.0' : HOST;
   }
 
   async loadDesktopSettings() {
@@ -361,15 +243,11 @@ export class LocalServerController {
       const stored = JSON.parse(raw);
       this.desktopSettings = {
         keepLocalServerRunning: Boolean(stored.keepLocalServerRunning),
-        exposeLocalServerOnNetwork: Boolean(stored.exposeLocalServerOnNetwork),
-        remoteServerUrl: normalizeRemoteServerUrl(stored.remoteServerUrl),
         themeMode: stored.themeMode === 'light' || stored.themeMode === 'dark' ? stored.themeMode : 'system',
       };
     } catch {
       this.desktopSettings = {
         keepLocalServerRunning: false,
-        exposeLocalServerOnNetwork: false,
-        remoteServerUrl: '',
         themeMode: 'system',
       };
     }
@@ -378,8 +256,6 @@ export class LocalServerController {
   async saveDesktopSettings(nextSettings = this.desktopSettings) {
     this.desktopSettings = {
       keepLocalServerRunning: Boolean(nextSettings.keepLocalServerRunning),
-      exposeLocalServerOnNetwork: Boolean(nextSettings.exposeLocalServerOnNetwork),
-      remoteServerUrl: normalizeRemoteServerUrl(nextSettings.remoteServerUrl),
       themeMode: nextSettings.themeMode === 'light' || nextSettings.themeMode === 'dark' ? nextSettings.themeMode : 'system',
     };
     await fs.mkdir(path.dirname(this.settingsPath), { recursive: true });
@@ -392,51 +268,30 @@ export class LocalServerController {
       throw new Error(`Unknown desktop setting: ${key}`);
     }
 
-    const isServerConnectivitySetting = key === 'exposeLocalServerOnNetwork' || key === 'remoteServerUrl';
-    const wasLocalRunning = Boolean(this.localServerUrl);
-    const changed = this.desktopSettings[key] !== value;
-    const nextValue = key === 'themeMode' || key === 'remoteServerUrl' ? value : Boolean(value);
+    const nextValue = key === 'themeMode' ? value : Boolean(value);
     await this.saveDesktopSettings({ ...this.desktopSettings, [key]: nextValue });
-
     return {
       desktopSettings: this.desktopSettings,
-      requiresRestartNotice: isServerConnectivitySetting && wasLocalRunning && changed,
     };
   }
 
-  /** Resolves the local server entry, installing the matching runtime if needed. */
   async resolveServerEntry() {
-    if (process.env.ELECTRON_SERVER_ENTRY) {
-      return process.env.ELECTRON_SERVER_ENTRY;
-    }
-
-    const bundledEntry = path.join(this.appRoot, 'dist-server', 'server', 'index.js');
-    if (process.env.CLOUDCLI_USE_INSTALLED_SERVER !== '1' && await pathExists(bundledEntry)) {
-      return bundledEntry;
-    }
-
-    if (!this.appVersion) {
-      throw new Error('Cannot install local server: app version is unknown.');
-    }
-    const bundleConfig = await readServerBundleConfig(this.appRoot);
     const installer = new ServerInstaller({
-      version: this.appVersion,
-      bundleReleaseTag: bundleConfig.releaseTag,
+      appRoot: this.appRoot,
       onLog: (line) => this.appendStartupLog(line),
     });
     return installer.ensureInstalled();
   }
 
-  startBundledServer(port, serverEntry) {
-    const bindHost = this.getServerBindHost();
+  startLocalServer(port, serverEntry) {
     const runtime = getNodeRuntime(this.isPackaged);
-    const serverCwd = getServerCwd(this.appRoot, serverEntry);
-
+    const serverCwd = this.appRoot;
     const command = `${runtime.command} ${serverEntry}`;
+
     this.appendStartupLog(`$ ${command}`);
     this.appendStartupLog(`runtime: ${runtime.label}`);
     this.appendStartupLog(`cwd: ${serverCwd}`);
-    this.appendStartupLog(`HOST=${bindHost} SERVER_PORT=${port} NODE_ENV=production`);
+    this.appendStartupLog(`HOST=${HOST} SERVER_PORT=${port} NODE_ENV=production`);
 
     this.ownedServerProcess = spawn(runtime.command, [serverEntry], {
       cwd: serverCwd,
@@ -444,8 +299,9 @@ export class LocalServerController {
       env: {
         ...process.env,
         ...runtime.env,
-        HOST: bindHost,
+        HOST,
         SERVER_PORT: String(port),
+        [LOCAL_SERVER_PORT_ENV]: String(port),
         NODE_ENV: 'production',
         PATH: getDesktopPath(),
       },
@@ -459,81 +315,77 @@ export class LocalServerController {
     });
 
     this.ownedServerProcess.stdout?.on('data', (chunk) => {
-      for (const line of String(chunk).split(/\r?\n/)) {
-        this.appendStartupLog(line);
-      }
+      for (const line of String(chunk).split(/\r?\n/)) this.appendStartupLog(line);
     });
 
     this.ownedServerProcess.stderr?.on('data', (chunk) => {
-      for (const line of String(chunk).split(/\r?\n/)) {
-        this.appendStartupLog(`stderr: ${line}`);
-      }
+      for (const line of String(chunk).split(/\r?\n/)) this.appendStartupLog(`stderr: ${line}`);
     });
 
     this.ownedServerProcess.once('exit', (code, signal) => {
       this.appendStartupLog(`process exited with code ${code ?? 'null'} and signal ${signal ?? 'null'}`);
       if (this.ownedServerProcess) {
-        console.error(`CloudCLI desktop server exited with code ${code ?? 'null'} and signal ${signal ?? 'null'}`);
+        console.error(`Gajae App local server exited with code ${code ?? 'null'} and signal ${signal ?? 'null'}`);
       }
       this.ownedServerProcess = null;
     });
   }
 
   async resolveLocalServerUrl() {
-    const defaultUrl = `http://${HOST}:${DEFAULT_PORT}`;
-    const defaultDisplayUrl = `http://${DISPLAY_HOST}:${DEFAULT_PORT}`;
     const devUrl = process.env.ELECTRON_DEV_URL;
-    const forceOwnServer = process.env.ELECTRON_FORCE_OWN_SERVER === '1';
+    const configuredUrl = getConfiguredLocalUrl();
+    const configuredPort = getPortFromUrl(configuredUrl);
 
     if (devUrl) {
-      const ready = await waitForCloudCliServer(defaultUrl, SERVER_START_TIMEOUT_MS);
+      const ready = await waitForGajaeAppServer(configuredUrl, SERVER_START_TIMEOUT_MS);
       if (!ready) {
-        throw new Error(`Development backend did not become ready at ${defaultDisplayUrl}`);
+        throw new Error(`Development server did not become ready at ${getDisplayUrl(configuredUrl)}.`);
       }
-      this.localServerPort = DEFAULT_PORT;
+      this.localServerPort = configuredPort;
       return devUrl;
     }
 
-    if (!forceOwnServer) {
-      const candidateUrls = await getExistingServerCandidateUrls(defaultUrl, this.desktopSettings.remoteServerUrl);
-      for (const candidateUrl of candidateUrls) {
-        if (await isCloudCliServer(candidateUrl)) {
-          const displayUrl = getDisplayUrl(candidateUrl);
-          this.localServerPort = getPortFromUrl(candidateUrl);
-          this.appendStartupLog(`Using existing Local CloudCLI at ${displayUrl}`);
-          return displayUrl;
-        }
+    // This health check is made only as part of the user-triggered Local Open
+    // action. It allows a separately started loopback Gajae App server to stay
+    // in charge of its own lifecycle.
+    if (await isGajaeAppServer(configuredUrl)) {
+      this.localServerPort = configuredPort;
+      const displayUrl = getDisplayUrl(configuredUrl);
+      this.appendStartupLog(`Using Gajae App Local at ${displayUrl}`);
+      return displayUrl;
+    }
+
+    let port = configuredPort;
+    if (!await isPortAvailable(port, HOST)) {
+      if (process.env[LOCAL_SERVER_URL_ENV] || process.env[LOCAL_SERVER_PORT_ENV]) {
+        throw new Error(`Gajae App Local is unavailable at ${getDisplayUrl(configuredUrl)}.`);
       }
+      port = await getFreePort();
     }
 
     const serverEntry = await this.resolveServerEntry();
-
-    const port = await chooseServerPort(this.getServerBindHost());
     const serverUrl = `http://${HOST}:${port}`;
     const displayUrl = `http://${DISPLAY_HOST}:${port}`;
     this.localServerPort = port;
-    this.startBundledServer(port, serverEntry);
+    this.startLocalServer(port, serverEntry);
 
-    const ready = await waitForCloudCliServer(serverUrl, SERVER_START_TIMEOUT_MS);
+    const ready = await waitForGajaeAppServer(serverUrl, SERVER_START_TIMEOUT_MS);
     if (!ready) {
       const recentLogs = this.getStartupLogs().slice(-20).join('\n');
       await this.shutdownOwnedServer();
       this.localServerPort = null;
       throw new Error([
-        `Bundled backend did not become ready at ${displayUrl}.`,
+        `Gajae App Local did not become ready at ${displayUrl}.`,
         recentLogs ? `Recent startup output:\n${recentLogs}` : 'No startup output was captured.',
       ].join('\n\n'));
     }
 
-    this.appendStartupLog(`Local CloudCLI ready at ${displayUrl}`);
-    this.localServerUrl = displayUrl;
+    this.appendStartupLog(`Gajae App Local ready at ${displayUrl}`);
     return displayUrl;
   }
 
   async ensureLocalServer() {
-    if (!this.localServerUrl) {
-      this.localServerUrl = await this.resolveLocalServerUrl();
-    }
+    if (!this.localServerUrl) this.localServerUrl = await this.resolveLocalServerUrl();
     return this.localServerUrl;
   }
 
@@ -541,7 +393,7 @@ export class LocalServerController {
     await this.ensureLocalServer();
     return {
       kind: 'local',
-      name: 'Local CloudCLI',
+      name: 'Gajae App Local',
       url: this.localServerUrl,
     };
   }

@@ -10,12 +10,6 @@
 //                                  downgrades this to a loud warning.
 //   - non-loopback bind, user OK → allow, but print an exposure warning
 //                                  (auth is enforced; tunnel/VPN still safer).
-//   - VITE_IS_PLATFORM=true      → app-level REST, WebSocket, and agent auth
-//                                  are bypassed. CLOUDCLI_TRUSTED_PROXY_AUTH=1
-//                                  must be set only when a trusted reverse
-//                                  proxy authenticates every forwarded request.
-//                                  Without it, non-loopback binds are blocked
-//                                  and loopback binds print a loud warning.
 import { isLoopbackHost, isWildcardHost } from '../../shared/networkHosts.js';
 
 /**
@@ -27,64 +21,14 @@ import { isLoopbackHost, isWildcardHost } from '../../shared/networkHosts.js';
  * @param {string} input.host bind address (e.g. '127.0.0.1', '0.0.0.0')
  * @param {boolean} input.hasUsers at least one account exists in the auth DB
  * @param {boolean} [input.allowRemoteSetup] explicit ALLOW_REMOTE_SETUP=1 opt-in
- * @param {boolean} [input.isPlatformMode] app-level authentication is bypassed
- * @param {boolean} [input.trustedProxyAuth] trusted reverse proxy enforces authentication
  * @returns {{level: 'ok'|'warn'|'block', reason: string, message?: string}}
  */
-export function evaluateExposure({
-    host,
-    hasUsers,
-    allowRemoteSetup = false,
-    isPlatformMode = false,
-    trustedProxyAuth = false,
-}) {
-    const isLoopback = isLoopbackHost(host);
+export function evaluateExposure({ host, hasUsers, allowRemoteSetup = false }) {
     const scope = isWildcardHost(host)
         ? 'ALL network interfaces'
         : `network address ${host}`;
 
-    if (isPlatformMode) {
-        if (!trustedProxyAuth) {
-            if (isLoopback) {
-                return {
-                    level: 'warn',
-                    reason: 'platform-loopback-untrusted-proxy',
-                    message:
-                        '\n' +
-                        '════════════════════ PLATFORM SECURITY WARNING ════════════════════\n' +
-                        'VITE_IS_PLATFORM=true disables REST, WebSocket, and agent authentication.\n' +
-                        'This loopback server is safe only while no remote reverse proxy forwards\n' +
-                        'requests to it. Forwarded remote requests are unauthenticated and can run\n' +
-                        'shell commands. Configure proxy authentication for every request, then set\n' +
-                        'CLOUDCLI_TRUSTED_PROXY_AUTH=1 to acknowledge that protection.\n' +
-                        '══════════════════════════════════════════════════════════════════════',
-                };
-            }
-
-            return {
-                level: 'block',
-                reason: 'platform-untrusted-proxy',
-                message:
-                    `Refusing to listen on ${scope}: VITE_IS_PLATFORM=true disables REST, ` +
-                    'WebSocket, and agent authentication. Configure a trusted reverse proxy to ' +
-                    'authenticate every forwarded request, then explicitly acknowledge it with ' +
-                    'CLOUDCLI_TRUSTED_PROXY_AUTH=1.',
-            };
-        }
-
-        if (!isLoopback) {
-            return {
-                level: 'warn',
-                reason: 'platform-trusted-proxy',
-                message:
-                    `CLOUDCLI_TRUSTED_PROXY_AUTH=1 — listening on ${scope} in platform mode. ` +
-                    'REST, WebSocket, and agent authentication are bypassed by this server; ' +
-                    'ensure the trusted reverse proxy authenticates every forwarded request.',
-            };
-        }
-    }
-
-    if (isLoopback) {
+    if (isLoopbackHost(host)) {
         return { level: 'ok', reason: 'loopback' };
     }
 

@@ -52,7 +52,7 @@ function Sidebar({
   const { isPWA } = useDeviceSettings({ trackMobile: false });
   const { updateAvailable, restartRequired, latestVersion, currentVersion, releaseInfo, installMode } = useVersionCheck(
     'devswha',
-    'claudecodeui',
+    'gajae-app',
   );
   const { preferences, setPreference } = useUiPreferences();
   const { sidebarVisible } = preferences;

@@ -15,7 +15,7 @@ import { parsePsTree } from './external-cli-sessions.service.js';
  *   - a pane_pid found in the holder's ancestor chain → that pane's tmux name (0 ambiguity)
  *   - cwd equality is a FALLBACK only (many-to-many when panes share a cwd)
  *
- * Matching is PATH-AGNOSTIC (uuid + realpath'd cwds), so production cloudcli's
+ * Matching is PATH-AGNOSTIC (uuid + realpath'd cwds), so the production app's
  * decoy HOME (whose `.gjc` is a symlink) does not break it. tmux/lsof/proc access
  * is ISOLATED here and fails closed to [] (or tmuxName:null on a miss — the UI
  * falls back to the conversation title).

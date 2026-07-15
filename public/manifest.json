@@ -1,7 +1,7 @@
 {
-  "name": "가재코드",
-  "short_name": "가재코드",
-  "description": "가재코드 — 폰에서 쓰는 gjc 함대 지휘기",
+  "name": "Gajae App",
+  "short_name": "Gajae App",
+  "description": "Gajae App — self-hosted AI coding workspace",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#1b0f0a",

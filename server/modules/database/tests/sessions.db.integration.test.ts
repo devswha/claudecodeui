@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { closeConnection } from '@/modules/database/connection.js';
+import { closeConnection, getDatabasePath } from '@/modules/database/connection.js';
 import { initializeDatabase } from '@/modules/database/init-db.js';
 import { sessionsDb } from '@/modules/database/repositories/sessions.db.js';
 
@@ -90,5 +90,14 @@ test('repository reads normalize SQLite UTC timestamps to ISO strings', async ()
     assert.ok(row?.updated_at.endsWith('Z'));
     assert.match(row?.created_at ?? '', /^\d{4}-\d{2}-\d{2}T/);
     assert.match(row?.updated_at ?? '', /^\d{4}-\d{2}-\d{2}T/);
+  });
+});
+test('sessionsDb uses the explicit DATABASE_PATH override', async () => {
+  await withIsolatedDatabase(() => {
+    assert.equal(getDatabasePath(), process.env.DATABASE_PATH);
+
+    sessionsDb.createSession('explicit-path', 'claude', '/workspace/demo-project', 'Explicit Path');
+
+    assert.equal(sessionsDb.getSessionById('explicit-path')?.custom_name, 'Explicit Path');
   });
 });

@@ -1,5 +1,12 @@
 import { BrowserView } from 'electron';
 
+import {
+  getTargetOrigin,
+  getTargetPartition,
+  isTargetUrlAllowed,
+  LOCAL_TARGET_ID,
+} from './targetSessions.js';
+
 const TARGET_LOAD_TIMEOUT_MS = 20000;
 
 function escapeHtml(value) {
@@ -31,10 +38,51 @@ function buildPlaceholderHtml(title, message, logs = []) {
   ].join('');
 }
 
-function isHttpUrl(url) {
+function getTargetTabId(target) {
+  const origin = getTargetOrigin(target);
+
+  if (target?.kind === 'local') {
+    if (target.id !== LOCAL_TARGET_ID) {
+      throw new Error('Local target must use the local target id.');
+    }
+    return { id: LOCAL_TARGET_ID, origin, partition: getTargetPartition(target) };
+  }
+
+  if (target?.kind === 'remote') {
+    const targetId = String(target.id || '');
+    const partition = getTargetPartition(target);
+    return {
+      id: `remote:${targetId}`,
+      origin,
+      partition,
+    };
+  }
+
+  throw new Error('A content view requires a local or remote target.');
+}
+
+function normalizeTarget(target) {
+  const address = getTargetTabId(target);
+  const name = String(target.name || '').trim();
+  if (!name) {
+    throw new Error('Target must have a name.');
+  }
+  return {
+    kind: target.kind,
+    id: target.kind === 'local' ? LOCAL_TARGET_ID : String(target.id),
+    name,
+    url: address.origin,
+    tabId: address.id,
+    partition: address.partition,
+  };
+}
+
+function isSafeExternalUrl(url) {
   try {
-    const parsed = new URL(url);
-    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+    const parsed = new URL(String(url));
+    return (parsed.protocol === 'http:' || parsed.protocol === 'https:')
+      && !parsed.username
+      && !parsed.password;
   } catch {
     return false;
   }
@@ -80,10 +128,42 @@ export class ViewHost {
     this.tabViews = new Map();
   }
 
-  configureChildWebContents(webContents) {
+  openUrlExternally(url) {
+    if (!isSafeExternalUrl(url)) return;
+    try {
+      Promise.resolve(this.openExternalUrl(url))
+        .catch((error) => this.showError('Could not open external link', error));
+    } catch (error) {
+      this.showError('Could not open external link', error);
+    }
+  }
+
+  configureChildWebContents(webContents, getTarget, allowInternalNavigation = () => false) {
     webContents.setWindowOpenHandler(({ url }) => {
-      void this.openExternalUrl(url).catch((error) => this.showError('Could not open external link', error));
+      this.openUrlExternally(url);
       return { action: 'deny' };
+    });
+
+    if (typeof getTarget !== 'function') return;
+
+    const guardNavigation = (event, url, openExternal) => {
+      if (allowInternalNavigation(url)) return;
+
+      const target = getTarget();
+      if (target && isTargetUrlAllowed(target, url)) return;
+
+      event.preventDefault();
+      if (openExternal) this.openUrlExternally(url);
+    };
+
+    webContents.on('will-navigate', (event, url) => {
+      guardNavigation(event, url, true);
+    });
+    webContents.on('will-frame-navigate', (event, url, isMainFrame) => {
+      if (!isMainFrame) guardNavigation(event, url, false);
+    });
+    webContents.on('will-redirect', (event, url, _isInPlace, isMainFrame) => {
+      guardNavigation(event, url, isMainFrame !== false);
     });
   }
 
@@ -130,41 +210,9 @@ export class ViewHost {
 
   reloadActiveView() {
     const view = this.getActiveView();
-    if (!view) return false;
+    if (!view || !isTargetUrlAllowed(view.__gajaeTarget, view.webContents.getURL())) return false;
     view.webContents.reloadIgnoringCache();
     return true;
-  }
-
-  async readLocalStorageValueForOrigin(originUrl, key) {
-    let targetOrigin;
-    try {
-      targetOrigin = new URL(originUrl).origin;
-    } catch {
-      return null;
-    }
-
-    for (const view of this.tabViews.values()) {
-      if (!view || view.webContents.isDestroyed()) continue;
-      let viewOrigin;
-      try {
-        viewOrigin = new URL(view.webContents.getURL()).origin;
-      } catch {
-        continue;
-      }
-      if (viewOrigin !== targetOrigin) continue;
-
-      try {
-        const value = await view.webContents.executeJavaScript(
-          `window.localStorage.getItem(${JSON.stringify(key)})`,
-          true
-        );
-        return typeof value === 'string' && value ? value : null;
-      } catch {
-        return null;
-      }
-    }
-
-    return null;
   }
 
   getTabViewDiagnostics() {
@@ -197,9 +245,43 @@ export class ViewHost {
     });
   }
 
-  getOrCreateTabView(tabId) {
+  bindTargetToView(view, tabId, target) {
+    const normalizedTarget = normalizeTarget(target);
+    if (tabId !== normalizedTarget.tabId) {
+      throw new Error('Tab id does not match the target id.');
+    }
+    if (
+      view.__gajaeTarget
+      && (
+        view.__gajaeTarget.id !== normalizedTarget.id
+        || view.__gajaeTarget.kind !== normalizedTarget.kind
+        || view.__gajaeTarget.url !== normalizedTarget.url
+        || view.__gajaePartition !== normalizedTarget.partition
+      )
+    ) {
+      throw new Error('A tab view cannot be rebound to another target or origin.');
+    }
+
+    view.__gajaeTarget = normalizedTarget;
+    return normalizedTarget;
+  }
+
+  getOrCreateTabView(tabId, target) {
+    const normalizedTarget = normalizeTarget(target);
+    if (tabId !== normalizedTarget.tabId) {
+      throw new Error('Tab id does not match the target id.');
+    }
+
     let view = this.tabViews.get(tabId);
-    if (view) return view;
+    if (view?.webContents.isDestroyed()) {
+      if (this.activeContentView === view) this.activeContentView = null;
+      this.tabViews.delete(tabId);
+      view = null;
+    }
+    if (view) {
+      this.bindTargetToView(view, tabId, normalizedTarget);
+      return view;
+    }
 
     view = new BrowserView({
       webPreferences: {
@@ -207,11 +289,30 @@ export class ViewHost {
         nodeIntegration: false,
         sandbox: true,
         preload: this.getPreloadPath(),
+        partition: normalizedTarget.partition,
       },
     });
-    this.configureChildWebContents(view.webContents);
+    view.__gajaeTarget = normalizedTarget;
+    view.__gajaePartition = normalizedTarget.partition;
+    view.__gajaeAllowPlaceholderNavigation = false;
+    this.configureChildWebContents(
+      view.webContents,
+      () => view.__gajaeTarget,
+      (url) => view.__gajaeAllowPlaceholderNavigation
+        && String(url).startsWith('data:text/html;charset=utf-8,'),
+    );
     this.tabViews.set(tabId, view);
     return view;
+  }
+
+  async loadPlaceholder(view, html) {
+    const url = `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
+    view.__gajaeAllowPlaceholderNavigation = true;
+    try {
+      await view.webContents.loadURL(url);
+    } finally {
+      view.__gajaeAllowPlaceholderNavigation = false;
+    }
   }
 
   attach(view) {
@@ -239,62 +340,77 @@ export class ViewHost {
   }
 
   async showTabPlaceholder(tabId, target, message) {
-    const view = this.getOrCreateTabView(tabId);
+    const view = this.getOrCreateTabView(tabId, target);
     this.attach(view);
-    const html = buildPlaceholderHtml(target.name || this.appName, message);
-    await view.webContents.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
-    view.__cloudcliStartupHtml = html;
-    view.__cloudcliLoadedUrl = null;
+    const html = buildPlaceholderHtml(view.__gajaeTarget.name || this.appName, message);
+    await this.loadPlaceholder(view, html);
+    view.__gajaeStartupHtml = html;
+    view.__gajaeLoadedOrigin = null;
   }
 
   async showLocalStartupTarget(tabId, target, logs) {
-    const view = this.getOrCreateTabView(tabId);
-    if (view.__cloudcliLoadingUrl) return;
+    const view = this.getOrCreateTabView(tabId, target);
+    if (view.__gajaeLoadingOrigin) return;
     this.attach(view);
-    const html = buildPlaceholderHtml(target.name || this.appName, 'Starting Local CloudCLI...', logs);
-    if (view.__cloudcliStartupHtml === html) return;
-    await view.webContents.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
-    view.__cloudcliStartupHtml = html;
-    view.__cloudcliLoadedUrl = null;
+    const html = buildPlaceholderHtml(view.__gajaeTarget.name || this.appName, 'Starting Gajae App Local...', logs);
+    if (view.__gajaeStartupHtml === html) return;
+    await this.loadPlaceholder(view, html);
+    view.__gajaeStartupHtml = html;
+    view.__gajaeLoadedOrigin = null;
   }
 
   async showContentTarget(tabId, target) {
-    const loadUrl = target.loadUrl || target.url;
-    if (!isHttpUrl(loadUrl)) {
-      throw new Error(`Refusing to load unsupported app URL: ${loadUrl}`);
-    }
-    const view = this.getOrCreateTabView(tabId);
+    const view = this.getOrCreateTabView(tabId, target);
+    const targetOrigin = view.__gajaeTarget.url;
     this.attach(view);
-    if (target.forceLoad || view.__cloudcliLoadedUrl !== target.url) {
-      view.__cloudcliLoadingUrl = loadUrl;
+
+    if (view.__gajaeLoadedOrigin !== targetOrigin) {
+      view.__gajaeLoadingOrigin = targetOrigin;
       try {
-        await loadUrlWithTimeout(view.webContents, loadUrl);
-        view.__cloudcliLoadedUrl = target.url;
-        view.__cloudcliStartupHtml = null;
-        delete target.loadUrl;
-        delete target.forceLoad;
+        await loadUrlWithTimeout(view.webContents, targetOrigin);
+        const loadedUrl = view.webContents.getURL();
+        if (!isTargetUrlAllowed(view.__gajaeTarget, loadedUrl)) {
+          throw new Error(`Refusing navigation outside the registered target origin: ${loadedUrl}`);
+        }
+        view.__gajaeLoadedOrigin = targetOrigin;
+        view.__gajaeStartupHtml = null;
       } finally {
-        if (view.__cloudcliLoadingUrl === loadUrl) {
-          view.__cloudcliLoadingUrl = null;
+        if (view.__gajaeLoadingOrigin === targetOrigin) {
+          view.__gajaeLoadingOrigin = null;
         }
       }
     }
-    return view.webContents.getURL();
+
+    const currentUrl = view.webContents.getURL();
+    if (!isTargetUrlAllowed(view.__gajaeTarget, currentUrl)) {
+      throw new Error(`Refusing navigation outside the registered target origin: ${currentUrl}`);
+    }
+    return currentUrl;
   }
 
   reloadTab(tabId) {
     const view = this.tabViews.get(tabId);
-    if (!view || view.webContents.isDestroyed()) return false;
+    if (
+      !view
+      || view.webContents.isDestroyed()
+      || !isTargetUrlAllowed(view.__gajaeTarget, view.webContents.getURL())
+    ) return false;
     view.webContents.reloadIgnoringCache();
     return true;
   }
 
   async navigateActiveView(url) {
     const view = this.getActiveView();
-    if (!view) return false;
+    if (!view || !isTargetUrlAllowed(view.__gajaeTarget, url)) {
+      throw new Error('Refusing navigation outside the active target origin.');
+    }
     await loadUrlWithTimeout(view.webContents, url);
-    view.__cloudcliLoadedUrl = url;
-    view.__cloudcliStartupHtml = null;
+    const loadedUrl = view.webContents.getURL();
+    if (!isTargetUrlAllowed(view.__gajaeTarget, loadedUrl)) {
+      throw new Error(`Refusing navigation outside the registered target origin: ${loadedUrl}`);
+    }
+    view.__gajaeLoadedOrigin = view.__gajaeTarget.url;
+    view.__gajaeStartupHtml = null;
     return true;
   }
 

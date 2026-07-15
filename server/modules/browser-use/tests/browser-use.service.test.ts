@@ -8,3 +8,8 @@ test('browser monitor list starts empty without agent sessions', async () => {
 
   assert.deepEqual(sessions, []);
 });
+test('browser runtime is always local', async () => {
+  const status = await browserUseService.getStatus();
+
+  assert.equal(status.runtime, 'local');
+});

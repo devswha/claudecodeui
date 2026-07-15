@@ -1,24 +1,15 @@
 import { BrowserWindow, Menu, Tray, clipboard, nativeImage, nativeTheme, session, webContents as electronWebContents } from 'electron';
 
+import {
+  clearTargetSessionData,
+  getTargetOrigin,
+  getTargetPartition,
+  isTargetUrlAllowed,
+} from './targetSessions.js';
 import { ViewHost } from './viewHost.js';
 
 const TITLEBAR_HEIGHT = 44;
-const AUTH_TOKEN_STORAGE_KEY = 'auth-token';
-function isAllowedPermissionOrigin(sourceUrl, controlPlaneUrl) {
-  try {
-    const source = new URL(sourceUrl);
-    if ((source.hostname === '127.0.0.1' || source.hostname === 'localhost') && source.protocol === 'http:') {
-      return true;
-    }
-    if (source.protocol !== 'https:') {
-      return false;
-    }
-    const controlPlane = new URL(controlPlaneUrl);
-    return source.origin === controlPlane.origin || source.hostname.endsWith('.cloudcli.ai');
-  } catch {
-    return false;
-  }
-}
+const ALLOWED_TARGET_PERMISSIONS = new Set(['clipboard-read', 'media', 'notifications']);
 
 function getWebContentsProcessId(contents) {
   return {
@@ -34,11 +25,9 @@ export class DesktopWindowManager {
     getLauncherPath,
     getPreloadPath,
     openExternalUrl,
-    getDesktopState,
-    getDisplayTargetName,
-    getRemoteEnvironmentMenuItems,
-    getCloudState,
+    getTargetState,
     getLocalState,
+    getRemoteTargetMenuItems,
     actions,
     tabs,
   }) {
@@ -47,11 +36,9 @@ export class DesktopWindowManager {
     this.getLauncherPath = getLauncherPath;
     this.getPreloadPath = getPreloadPath;
     this.openExternalUrl = openExternalUrl;
-    this.getDesktopState = getDesktopState;
-    this.getDisplayTargetName = getDisplayTargetName;
-    this.getRemoteEnvironmentMenuItems = getRemoteEnvironmentMenuItems;
-    this.getCloudState = getCloudState;
+    this.getTargetState = getTargetState;
     this.getLocalState = getLocalState;
+    this.getRemoteTargetMenuItems = getRemoteTargetMenuItems;
     this.actions = actions;
     this.tabs = tabs;
 
@@ -59,6 +46,8 @@ export class DesktopWindowManager {
     this.settingsWindow = null;
     this.tray = null;
     this.launcherLoaded = false;
+    this.targetsByPartition = new Map();
+    this.configuredPermissionPartitions = new Set();
     this.viewHost = new ViewHost({
       appName: this.appName,
       getMainWindow: () => this.mainWindow,
@@ -100,36 +89,43 @@ export class DesktopWindowManager {
 
   async showLocalStartupTarget(target, logs) {
     const tabId = this.tabs.getTabIdForTarget(target);
+    this.configureTargetPermissions(target);
     await this.viewHost.showLocalStartupTarget(tabId, target, logs);
   }
 
   async showContentTarget(target) {
+    getTargetOrigin(target);
+    this.configureTargetPermissions(target);
     const tabId = this.tabs.getTabIdForTarget(target);
-    await this.viewHost.showContentTarget(tabId, target);
+    const finalUrl = await this.viewHost.showContentTarget(tabId, target);
+    if (!isTargetUrlAllowed(target, finalUrl)) {
+      throw new Error(`Refusing navigation outside the registered target origin: ${finalUrl}`);
+    }
+    return finalUrl;
   }
 
   destroyTabView(tabId) {
     this.viewHost.destroyTabView(tabId);
   }
 
-  emitDesktopState() {
-    const state = this.getDesktopState();
+  emitTargetState() {
+    const state = this.getTargetState();
     if (this.mainWindow && !this.mainWindow.webContents.isDestroyed()) {
-      this.mainWindow.webContents.send('cloudcli-desktop:state-updated', state);
+      this.mainWindow.webContents.send('gajae-app-desktop:state:changed', state);
     }
     if (this.settingsWindow && !this.settingsWindow.webContents.isDestroyed()) {
-      this.settingsWindow.webContents.send('cloudcli-desktop:state-updated', state);
+      this.settingsWindow.webContents.send('gajae-app-desktop:state:changed', state);
     }
   }
 
   emitLauncherCommand(command) {
     if (!this.mainWindow || this.mainWindow.webContents.isDestroyed()) return;
-    this.mainWindow.webContents.send('cloudcli-desktop:launcher-command', command);
+    this.mainWindow.webContents.send('gajae-app-desktop:launcher-command', command);
   }
 
   emitSettingsCommand(command) {
     if (!this.settingsWindow || this.settingsWindow.webContents.isDestroyed()) return;
-    this.settingsWindow.webContents.send('cloudcli-desktop:launcher-command', command);
+    this.settingsWindow.webContents.send('gajae-app-desktop:launcher-command', command);
   }
 
   syncSettingsWindowBounds() {
@@ -184,8 +180,43 @@ export class DesktopWindowManager {
     this.settingsWindow.close();
   }
 
+  configureTargetPermissions(target) {
+    const partition = getTargetPartition(target);
+    this.targetsByPartition.set(partition, target);
+    if (this.configuredPermissionPartitions.has(partition)) return;
+
+    const targetSession = session.fromPartition(partition);
+    const isAllowedPermission = (webContents, permission) => {
+      const registeredTarget = this.targetsByPartition.get(partition);
+      if (!registeredTarget || !webContents) return false;
+      return ALLOWED_TARGET_PERMISSIONS.has(permission)
+        && isTargetUrlAllowed(registeredTarget, webContents.getURL());
+    };
+
+    targetSession.setPermissionRequestHandler((webContents, permission, callback) => {
+      callback(isAllowedPermission(webContents, permission));
+    });
+    targetSession.setPermissionCheckHandler((webContents, permission) => isAllowedPermission(webContents, permission));
+    this.configuredPermissionPartitions.add(partition);
+  }
+
+  async clearTargetSession(target) {
+    const partition = getTargetPartition(target);
+    const tabId = this.tabs.getTabIdForTarget(target);
+    this.destroyTabView(tabId);
+    await clearTargetSessionData(target, (targetPartition) => session.fromPartition(targetPartition));
+    this.targetsByPartition.delete(partition);
+  }
+
+  async clearTargetSessionForOriginChange(previousTarget, nextTarget) {
+    if (getTargetOrigin(previousTarget) !== getTargetOrigin(nextTarget)) {
+      await this.clearTargetSession(previousTarget);
+    }
+  }
+
   async showTarget(target, { trackTab = true } = {}) {
-    if (!this.mainWindow) return;
+    if (!this.mainWindow) return null;
+    getTargetOrigin(target);
     if (trackTab) {
       this.tabs.upsertTarget(target);
     }
@@ -193,13 +224,13 @@ export class DesktopWindowManager {
     this.buildAppMenu();
     this.mainWindow.setTitle(`${this.appName} - ${target.name}`);
     const finalUrl = await this.showContentTarget(target);
-    this.emitDesktopState();
+    this.emitTargetState();
     return finalUrl;
   }
 
   async showLauncher() {
     if (!this.mainWindow) return;
-    const target = { kind: 'launcher', name: this.appName, url: null };
+    const target = { kind: 'launcher', id: 'home', name: this.appName, url: null };
     this.tabs.upsertTarget(target);
     this.actions.setActiveTarget(target);
     this.detachActiveContentView();
@@ -210,17 +241,17 @@ export class DesktopWindowManager {
       await this.mainWindow.loadFile(this.getLauncherPath());
       this.launcherLoaded = true;
     } else {
-      this.emitDesktopState();
+      this.emitTargetState();
     }
   }
 
   async switchDesktopTab(tabId) {
     const tab = this.tabs.activate(tabId);
-    if (!tab || !this.mainWindow) return this.getDesktopState();
+    if (!tab || !this.mainWindow) return this.getTargetState();
 
     if (tab.id === 'home' || tab.kind === 'launcher') {
       await this.showLauncher();
-      return this.getDesktopState();
+      return this.getTargetState();
     }
 
     if (!tab.target?.url) {
@@ -228,47 +259,47 @@ export class DesktopWindowManager {
     }
 
     await this.showTarget(tab.target, { trackTab: false });
-    return this.getDesktopState();
+    return this.getTargetState();
   }
 
   async reloadActiveTab() {
     const activeTab = this.tabs.getActiveTab();
     if (!activeTab || activeTab.id === 'home' || activeTab.kind === 'launcher') {
-      this.emitDesktopState();
-      return this.getDesktopState();
+      this.emitTargetState();
+      return this.getTargetState();
     }
 
     const reloaded = this.viewHost.reloadTab(activeTab.id);
     if (!reloaded && activeTab.target?.url) {
       await this.showTarget(activeTab.target, { trackTab: false });
     }
-    this.emitDesktopState();
-    return this.getDesktopState();
+    this.emitTargetState();
+    return this.getTargetState();
   }
 
   async navigateActiveView(url) {
+    const activeTarget = this.getTargetState().activeTarget;
+    if (!activeTarget || !isTargetUrlAllowed(activeTarget, url)) {
+      throw new Error('Refusing navigation outside the active target origin.');
+    }
     const navigated = await this.viewHost.navigateActiveView(url);
-    this.emitDesktopState();
+    this.emitTargetState();
     return navigated;
-  }
-
-  async readAuthTokenForTarget(url) {
-    return this.viewHost.readLocalStorageValueForOrigin(url, AUTH_TOKEN_STORAGE_KEY);
   }
 
   openActiveTabDevTools() {
     if (this.viewHost.openActiveViewDevTools()) return;
-    void this.actions.showError('No active BrowserView', new Error('Switch to a non-launcher tab before opening active tab DevTools.'));
+    void this.actions.showError('No active target view', new Error('Switch to a target tab before opening active tab DevTools.'));
   }
 
   reloadActiveBrowserViewForDiagnostics() {
     if (this.viewHost.reloadActiveView()) return;
-    void this.actions.showError('No active BrowserView', new Error('Switch to a non-launcher tab before reloading the active BrowserView.'));
+    void this.actions.showError('No active target view', new Error('Switch to a target tab before reloading the active view.'));
   }
 
   detachActiveBrowserViewForDiagnostics() {
     if (this.viewHost.detachActiveView()) return;
-    void this.actions.showError('No active BrowserView', new Error('Switch to a non-launcher tab before detaching the active BrowserView.'));
+    void this.actions.showError('No active target view', new Error('Switch to a target tab before detaching the active view.'));
   }
 
   copyWebContentsDiagnostics() {
@@ -276,7 +307,7 @@ export class DesktopWindowManager {
     const tabViewByContentsId = new Map(
       tabViewDiagnostics
         .filter((item) => item.webContentsId != null)
-        .map((item) => [item.webContentsId, item])
+        .map((item) => [item.webContentsId, item]),
     );
 
     const rows = electronWebContents.getAllWebContents().map((contents) => {
@@ -289,7 +320,7 @@ export class DesktopWindowManager {
       } else if (this.settingsWindow?.webContents?.id === contents.id) {
         owner = 'settings-window';
       } else if (tabView) {
-        owner = `browser-view:${tabView.tabId}`;
+        owner = `target-view:${tabView.tabId}`;
       }
 
       return {
@@ -307,7 +338,7 @@ export class DesktopWindowManager {
     });
 
     const activeTab = this.tabs.getActiveTab();
-    const diagnostics = {
+    clipboard.writeText(JSON.stringify({
       generatedAt: new Date().toISOString(),
       activeTabId: this.tabs.activeTabId,
       activeTab: activeTab
@@ -320,103 +351,25 @@ export class DesktopWindowManager {
         : null,
       tabViews: tabViewDiagnostics,
       webContents: rows,
-    };
-
-    clipboard.writeText(JSON.stringify(diagnostics, null, 2));
+    }, null, 2));
   }
 
   async closeDesktopTab(tabId) {
     const tab = this.tabs.remove(tabId);
-    if (!tab) return this.getDesktopState();
+    if (!tab) return this.getTargetState();
     this.destroyTabView(tabId);
     if (this.tabs.activeTabId === 'home') {
       await this.showLauncher();
     } else {
-      this.emitDesktopState();
+      this.emitTargetState();
     }
-    return this.getDesktopState();
-  }
-
-  buildEnvironmentActionsSubmenu(environment) {
-    const items = [];
-    const statusSuffix = environment.status === 'running' ? '' : ` (${environment.status})`;
-    items.push({
-      label: 'Open Environment',
-      click: () => void this.actions.openEnvironmentInDesktop(environment)
-        .catch((error) => this.actions.showError(`Could not open ${environment.name || environment.subdomain}${statusSuffix}`, error)),
-    });
-    items.push({
-      label: 'Open in Browser',
-      click: () => void this.actions.openEnvironmentInBrowser(environment)
-        .catch((error) => this.actions.showError('Could not open environment in browser', error)),
-    });
-    items.push({
-      label: 'Open in VS Code',
-      click: () => void this.actions.openEnvironmentInIde(environment, 'vscode')
-        .catch((error) => this.actions.showError('Could not open environment in VS Code', error)),
-    });
-    items.push({
-      label: 'Open in Cursor',
-      click: () => void this.actions.openEnvironmentInIde(environment, 'cursor')
-        .catch((error) => this.actions.showError('Could not open environment in Cursor', error)),
-    });
-    items.push({
-      label: 'Open SSH Terminal',
-      click: () => void this.actions.openEnvironmentInSsh(environment)
-        .catch((error) => this.actions.showError('Could not open SSH terminal', error)),
-    });
-    items.push({
-      label: 'Copy Mobile/Web URL',
-      click: () => this.actions.copyText(this.actions.getEnvironmentUrl(environment)),
-    });
-    if (environment.status !== 'running') {
-      items.unshift({
-        label: environment.status === 'paused' ? 'Resume' : 'Start',
-        click: () => void this.actions.startEnvironment(environment)
-          .catch((error) => this.actions.showError('Could not start environment', error)),
-      });
-    }
-    if (environment.status === 'running') {
-      items.push({
-        label: 'Stop',
-        click: () => void this.actions.stopEnvironment(environment)
-          .catch((error) => this.actions.showError('Could not stop environment', error)),
-      });
-    }
-    return items;
-  }
-
-  buildTrayEnvironmentSection() {
-    const cloudState = this.getCloudState();
-    if (!cloudState.account?.apiKey) {
-      return [
-        {
-          label: cloudState.account?.email ? `Reconnect ${cloudState.account.email}` : 'Login',
-          click: () => void this.actions.connectCloudAccount()
-            .catch((error) => this.actions.showError('Could not connect CloudCLI account', error)),
-        },
-      ];
-    }
-
-    if (!cloudState.environments.length) {
-      return [{ label: 'No environments found', enabled: false }];
-    }
-
-    return cloudState.environments.map((environment) => ({
-      label: `${environment.name || environment.subdomain} - ${environment.status}`,
-      submenu: this.buildEnvironmentActionsSubmenu(environment),
-    }));
+    return this.getTargetState();
   }
 
   buildAppMenu() {
     if (!this.mainWindow) return;
-    const cloudState = this.getCloudState();
     const localState = this.getLocalState();
-    const remoteItems = this.getRemoteEnvironmentMenuItems();
-    const cloudAccountLabel = cloudState.account?.apiKey
-      ? (cloudState.account?.email ? `Connected: ${cloudState.account.email}` : 'CloudCLI Connected')
-      : (cloudState.account?.email ? `Reconnect: ${cloudState.account.email}` : 'Connect CloudCLI Account...');
-
+    const remoteItems = this.getRemoteTargetMenuItems();
     const template = [
       {
         label: this.appName,
@@ -429,25 +382,18 @@ export class DesktopWindowManager {
             click: () => void this.showLauncher().catch((error) => this.actions.showError('Could not show launcher', error)),
           },
           {
-            label: 'Switch Environment',
-            accelerator: 'CmdOrCtrl+Shift+E',
-            click: () => void this.actions.showEnvironmentPicker().catch((error) => this.actions.showError('Could not switch environment', error)),
+            label: 'Switch Target',
+            accelerator: 'CmdOrCtrl+Shift+T',
+            click: () => void this.actions.showTargetPicker().catch((error) => this.actions.showError('Could not switch target', error)),
           },
           {
             label: 'Diagnostics',
             submenu: [
-              {
-                label: 'Copy Diagnostics',
-                click: () => void this.actions.copyDiagnostics(),
-              },
+              { label: 'Copy Diagnostics', click: () => void this.actions.copyDiagnostics() },
             ],
           },
           { type: 'separator' },
-          {
-            label: process.platform === 'darwin' ? `Hide ${this.appName}` : 'Hide',
-            role: 'hide',
-            visible: process.platform === 'darwin',
-          },
+          { label: process.platform === 'darwin' ? `Hide ${this.appName}` : 'Hide', role: 'hide', visible: process.platform === 'darwin' },
           { label: 'Hide Others', role: 'hideOthers', visible: process.platform === 'darwin' },
           { label: 'Show All', role: 'unhide', visible: process.platform === 'darwin' },
           { type: 'separator', visible: process.platform === 'darwin' },
@@ -455,7 +401,7 @@ export class DesktopWindowManager {
         ],
       },
       {
-        label: 'Environment',
+        label: 'Targets',
         submenu: [
           {
             label: 'Show Launcher',
@@ -463,65 +409,33 @@ export class DesktopWindowManager {
             click: () => void this.showLauncher().catch((error) => this.actions.showError('Could not show launcher', error)),
           },
           {
-            label: 'Switch Environment',
-            accelerator: 'CmdOrCtrl+Shift+E',
-            click: () => void this.actions.showEnvironmentPicker().catch((error) => this.actions.showError('Could not switch environment', error)),
+            label: 'Switch Target',
+            accelerator: 'CmdOrCtrl+Shift+T',
+            click: () => void this.actions.showTargetPicker().catch((error) => this.actions.showError('Could not switch target', error)),
           },
           { type: 'separator' },
           {
-            label: 'Open Local CloudCLI',
+            label: 'Open Local',
             accelerator: 'CmdOrCtrl+L',
-            click: () => void this.actions.openLocalInDesktop().catch((error) => this.actions.showError('Could not open local CloudCLI', error)),
+            click: () => void this.actions.openLocalTarget().catch((error) => this.actions.showError('Could not open Local', error)),
           },
           {
-            label: 'Open Local Web UI in Browser',
-            accelerator: 'CmdOrCtrl+Shift+W',
-            click: () => void this.actions.openLocalWebUi().catch((error) => this.actions.showError('Could not open local web UI', error)),
+            label: 'Open Local in Browser',
+            click: () => void this.actions.openLocalWebUi().catch((error) => this.actions.showError('Could not open Local in browser', error)),
           },
           {
-            label: 'Copy Local Web URL',
-            accelerator: 'CmdOrCtrl+Shift+U',
-            click: () => void this.actions.copyLocalWebUrl().catch((error) => this.actions.showError('Could not copy local web URL', error)),
+            label: 'Copy Local URL',
+            click: () => void this.actions.copyLocalWebUrl().catch((error) => this.actions.showError('Could not copy Local URL', error)),
           },
+          { type: 'separator' },
+          { label: 'Remote Targets', submenu: remoteItems },
           { type: 'separator' },
           {
             label: 'Keep Local Server Running After Quit',
             type: 'checkbox',
-            checked: localState.desktopSettings.keepLocalServerRunning,
+            checked: Boolean(localState.desktopSettings?.keepLocalServerRunning),
             click: (menuItem) => void this.actions.updateDesktopSetting('keepLocalServerRunning', menuItem.checked)
               .catch((error) => this.actions.showError('Could not update desktop setting', error)),
-          },
-          {
-            label: 'Allow LAN Access to Local Server',
-            type: 'checkbox',
-            checked: localState.desktopSettings.exposeLocalServerOnNetwork,
-            click: (menuItem) => void this.actions.updateDesktopSetting('exposeLocalServerOnNetwork', menuItem.checked)
-              .catch((error) => this.actions.showError('Could not update desktop setting', error)),
-          },
-        ],
-      },
-      {
-        label: 'Cloud',
-        submenu: [
-          {
-            label: cloudAccountLabel,
-            accelerator: 'CmdOrCtrl+Shift+C',
-            click: () => void this.actions.connectCloudAccount().catch((error) => this.actions.showError('Could not connect CloudCLI account', error)),
-          },
-          {
-            label: 'Refresh Cloud Environments',
-            click: () => void this.actions.refreshCloudEnvironments().catch((error) => this.actions.showError('Could not load CloudCLI environments', error)),
-            enabled: Boolean(cloudState.account?.apiKey),
-          },
-          {
-            label: 'Logout CloudCLI Account',
-            click: () => void this.actions.clearCloudAccount().catch((error) => this.actions.showError('Could not logout', error)),
-            enabled: Boolean(cloudState.account?.apiKey),
-          },
-          { type: 'separator' },
-          {
-            label: 'Remote Environments',
-            submenu: remoteItems,
           },
         ],
       },
@@ -543,22 +457,10 @@ export class DesktopWindowManager {
           { role: 'reload' },
           { role: 'forceReload' },
           { role: 'toggleDevTools' },
-          {
-            label: 'Open Active Tab DevTools',
-            click: () => this.openActiveTabDevTools(),
-          },
-          {
-            label: 'Copy WebContents Diagnostics',
-            click: () => this.copyWebContentsDiagnostics(),
-          },
-          {
-            label: 'Reload Active BrowserView',
-            click: () => this.reloadActiveBrowserViewForDiagnostics(),
-          },
-          {
-            label: 'Detach Active BrowserView',
-            click: () => this.detachActiveBrowserViewForDiagnostics(),
-          },
+          { label: 'Open Active Target DevTools', click: () => this.openActiveTabDevTools() },
+          { label: 'Copy WebContents Diagnostics', click: () => this.copyWebContentsDiagnostics() },
+          { label: 'Reload Active Target View', click: () => this.reloadActiveBrowserViewForDiagnostics() },
+          { label: 'Detach Active Target View', click: () => this.detachActiveBrowserViewForDiagnostics() },
           { type: 'separator' },
           { role: 'resetZoom' },
           { role: 'zoomIn' },
@@ -578,14 +480,7 @@ export class DesktopWindowManager {
       {
         label: 'Help',
         submenu: [
-        {
-          label: 'Open cloudcli.ai',
-          click: () => void this.actions.openCloudDashboard(),
-        },
-          {
-            label: 'Copy Diagnostics',
-            click: () => void this.actions.copyDiagnostics(),
-          },
+          { label: 'Copy Diagnostics', click: () => void this.actions.copyDiagnostics() },
         ],
       },
     ];
@@ -596,101 +491,45 @@ export class DesktopWindowManager {
 
   buildTrayMenu() {
     if (!this.tray) return;
-    const cloudState = this.getCloudState();
     const localState = this.getLocalState();
-
     const template = [
       {
         label: 'Local',
         submenu: [
           {
-            label: localState.localServerRunning ? 'Open Local in CloudCLI' : 'Start Local in CloudCLI',
-            click: () => void this.actions.openLocalInDesktop().catch((error) => this.actions.showError('Could not open local CloudCLI', error)),
+            label: localState.localServerRunning ? 'Open Local' : 'Start Local',
+            click: () => void this.actions.openLocalTarget().catch((error) => this.actions.showError('Could not open Local', error)),
           },
           {
             label: 'Open Local in Browser',
-            click: () => void this.actions.openLocalWebUi().catch((error) => this.actions.showError('Could not open local web UI', error)),
+            click: () => void this.actions.openLocalWebUi().catch((error) => this.actions.showError('Could not open Local in browser', error)),
           },
           {
             label: 'Copy Local URL',
-            click: () => void this.actions.copyLocalWebUrl().catch((error) => this.actions.showError('Could not copy local web URL', error)),
+            click: () => void this.actions.copyLocalWebUrl().catch((error) => this.actions.showError('Could not copy Local URL', error)),
           },
         ],
       },
-      {
-        label: 'Cloud Environments',
-        submenu: this.buildTrayEnvironmentSection(),
-      },
+      { label: 'Remote Targets', submenu: this.getRemoteTargetMenuItems() },
       { type: 'separator' },
-      {
-        label: cloudState.account?.email ? `Connected: ${cloudState.account.email}` : 'Login',
-        click: () => void this.actions.connectCloudAccount().catch((error) => this.actions.showError('Could not connect CloudCLI account', error)),
-      },
-      {
-        label: 'Logout CloudCLI Account',
-        click: () => void this.actions.clearCloudAccount().catch((error) => this.actions.showError('Could not logout', error)),
-        enabled: Boolean(cloudState.account?.apiKey),
-      },
-      { type: 'separator' },
-      {
-        label: `Quit ${this.appName}`,
-        role: 'quit',
-      },
+      { label: `Quit ${this.appName}`, role: 'quit' },
     ];
 
-    this.tray.setToolTip(`${this.appName}${this.actions.getActiveTarget()?.name ? ` - ${this.actions.getActiveTarget().name}` : ''}`);
+    const activeTarget = this.getTargetState().activeTarget;
+    this.tray.setToolTip(`${this.appName}${activeTarget?.name ? ` - ${activeTarget.name}` : ''}`);
     this.tray.setContextMenu(Menu.buildFromTemplate(template));
   }
 
   async showDesktopSettings() {
-    if (!this.mainWindow) return this.getDesktopState();
+    if (!this.mainWindow) return this.getTargetState();
     await this.ensureSettingsWindow('desktop-settings');
-    return this.getDesktopState();
+    return this.getTargetState();
   }
 
   async showLocalSettings() {
-    if (!this.mainWindow) return this.getDesktopState();
+    if (!this.mainWindow) return this.getTargetState();
     await this.ensureSettingsWindow('local-settings');
-    return this.getDesktopState();
-  }
-
-  async showActiveEnvironmentActionsMenu() {
-    if (!this.mainWindow) return this.getDesktopState();
-    const activeTarget = this.actions.getActiveTarget();
-    if (activeTarget?.kind !== 'remote') return this.getDesktopState();
-
-    const environment = this.getCloudState().environments.find((item) => item.id === activeTarget.id);
-    if (!environment) return this.getDesktopState();
-
-    const menu = Menu.buildFromTemplate(this.buildEnvironmentActionsSubmenu(environment));
-    menu.popup({ window: this.mainWindow });
-    return this.getDesktopState();
-  }
-
-  async showEnvironmentActionsMenu(environmentId) {
-    if (!this.mainWindow) return this.getDesktopState();
-    const environment = this.getCloudState().environments.find((item) => item.id === environmentId);
-    if (!environment) return this.getDesktopState();
-
-    const menu = Menu.buildFromTemplate(this.buildEnvironmentActionsSubmenu(environment));
-    menu.popup({ window: this.mainWindow });
-    return this.getDesktopState();
-  }
-
-  configurePermissions() {
-    const isAllowedPermission = (webContents, permission) => {
-      const sourceUrl = webContents.getURL();
-      const allowedPermissions = new Set(['clipboard-read', 'media', 'notifications']);
-      return isAllowedPermissionOrigin(sourceUrl, this.getCloudState().controlPlaneUrl) && allowedPermissions.has(permission);
-    };
-
-    session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
-      callback(isAllowedPermission(webContents, permission));
-    });
-    session.defaultSession.setPermissionCheckHandler((webContents, permission) => {
-      if (!webContents) return false;
-      return isAllowedPermission(webContents, permission);
-    });
+    return this.getTargetState();
   }
 
   createTray() {
@@ -724,7 +563,7 @@ export class DesktopWindowManager {
             titleBarOverlay: {
               color: nativeTheme.shouldUseDarkColors ? '#111111' : '#f7f8fa',
               symbolColor: nativeTheme.shouldUseDarkColors ? '#a1a1a1' : '#5b6470',
-              height: 44,
+              height: TITLEBAR_HEIGHT,
             },
           }),
       webPreferences: {
@@ -748,11 +587,9 @@ export class DesktopWindowManager {
       this.viewHost.resizeActiveView();
       this.syncSettingsWindowBounds();
     });
-
     this.mainWindow.on('move', () => {
       this.syncSettingsWindowBounds();
     });
-
     this.mainWindow.on('closed', () => {
       this.viewHost.clear();
       this.settingsWindow = null;

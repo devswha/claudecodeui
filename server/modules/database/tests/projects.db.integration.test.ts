@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { closeConnection } from '@/modules/database/connection.js';
+import Database from 'better-sqlite3';
+
+import { closeConnection, getDatabasePath } from '@/modules/database/connection.js';
 import { initializeDatabase } from '@/modules/database/init-db.js';
 import { projectsDb } from '@/modules/database/repositories/projects.db.js';
 
@@ -69,4 +71,50 @@ test('projectsDb.createProjectPath returns active_conflict for active duplicates
     assert.equal(conflict.project?.project_id, initial.project?.project_id);
     assert.equal(conflict.project?.isArchived, 0);
   });
+});
+test('uses the gajae-app root and leaves the populated old root untouched without DATABASE_PATH', async () => {
+  const previousDatabasePath = process.env.DATABASE_PATH;
+  const previousHome = process.env.HOME;
+  const temporaryHome = await mkdtemp(path.join(tmpdir(), 'projects-db-home-'));
+  const oldDatabasePath = path.join(temporaryHome, `.${['cloud', 'cli'].join('')}`, 'auth.db');
+  const databasePath = path.join(temporaryHome, '.gajae-app', 'auth.db');
+
+  await mkdir(path.dirname(oldDatabasePath), { recursive: true });
+  const oldDatabase = new Database(oldDatabasePath);
+  oldDatabase.exec(`
+    CREATE TABLE preserved_data (value TEXT NOT NULL);
+    INSERT INTO preserved_data (value) VALUES ('old-root-data');
+  `);
+  oldDatabase.close();
+
+  const oldDatabaseContents = await readFile(oldDatabasePath);
+  closeConnection();
+  process.env.HOME = temporaryHome;
+  delete process.env.DATABASE_PATH;
+
+  try {
+    assert.equal(getDatabasePath(), databasePath);
+    await initializeDatabase();
+
+    assert.ok((await stat(databasePath)).isFile());
+    assert.deepEqual(await readFile(oldDatabasePath), oldDatabaseContents);
+
+    const preservedDatabase = new Database(oldDatabasePath, { readonly: true });
+    const preservedRow = preservedDatabase.prepare('SELECT value FROM preserved_data').get() as { value: string };
+    assert.equal(preservedRow.value, 'old-root-data');
+    preservedDatabase.close();
+  } finally {
+    closeConnection();
+    if (previousDatabasePath === undefined) {
+      delete process.env.DATABASE_PATH;
+    } else {
+      process.env.DATABASE_PATH = previousDatabasePath;
+    }
+    if (previousHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = previousHome;
+    }
+    await rm(temporaryHome, { recursive: true, force: true });
+  }
 });

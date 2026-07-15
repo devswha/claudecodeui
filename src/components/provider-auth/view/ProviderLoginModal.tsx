@@ -1,6 +1,6 @@
 import { X } from 'lucide-react';
 import StandaloneShell from '../../standalone-shell/view/StandaloneShell';
-import { DEFAULT_PROJECT_FOR_EMPTY_SHELL, IS_PLATFORM } from '../../../constants/config';
+import { DEFAULT_PROJECT_FOR_EMPTY_SHELL } from '../../../constants/config';
 import type { LLMProvider } from '../../../types/app';
 
 type ProviderLoginModalProps = {
@@ -34,7 +34,7 @@ const getProviderCommand = ({
   }
 
   if (provider === 'codex') {
-    return IS_PLATFORM ? 'codex login --device-auth' : 'codex login';
+    return 'codex login';
   }
 
   if (provider === 'opencode') {

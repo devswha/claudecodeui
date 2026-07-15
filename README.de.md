@@ -1,18 +1,11 @@
 <div align="center">
- <img src="public/logo.svg" alt="CloudCLI UI" width="64" height="64">
- <h1>Cloud CLI (auch bekannt als Claude Code UI)</h1>
- <p>Eine Desktop- und Mobile-Oberfläche für <a href="https://docs.anthropic.com/en/docs/claude-code">Claude Code</a>, <a href="https://docs.cursor.com/en/cli/overview">Cursor CLI</a> und <a href="https://developers.openai.com/codex">Codex</a>.<br>Lokal oder remote nutzbar – verwalte deine aktiven Projekte und Sitzungen von überall.</p>
+ <img src="public/logo.svg" alt="Gajae App" width="64" height="64">
+ <h1>Gajae App</h1>
+ <p>Ein selbst gehosteter Arbeitsbereich für <a href="https://docs.anthropic.com/en/docs/claude-code">Claude Code</a>, <a href="https://docs.cursor.com/en/cli/overview">Cursor CLI</a> und <a href="https://developers.openai.com/codex">Codex</a>.<br>Verwalte Projekte und Sitzungen direkt auf deinem eigenen Rechner.</p>
 </div>
 
 <p align="center">
- <a href="https://cloudcli.ai">CloudCLI Cloud</a> · <a href="https://cloudcli.ai/docs">Dokumentation</a> · <a href="https://discord.gg/buxwujPNRE">Discord</a> · <a href="https://github.com/siteboon/claudecodeui/issues">Fehler melden</a> · <a href="CONTRIBUTING.md">Mitwirken</a>
-</p>
-
-<p align="center">
- <a href="https://cloudcli.ai"><img src="https://img.shields.io/badge/☁️_CloudCLI_Cloud-Try_Now-0066FF?style=for-the-badge" alt="CloudCLI Cloud"></a>
- <a href="https://discord.gg/buxwujPNRE"><img src="https://img.shields.io/badge/Discord-Join_Community-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Join Community"></a>
- <br><br>
- <a href="https://trendshift.io/repositories/15586" target="_blank"><img src="https://trendshift.io/api/badge/repositories/15586" alt="siteboon%2Fclaudecodeui | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
+ <a href="https://github.com/devswha/gajae-app">GitHub-Repository</a> · <a href="docs/SELF-HOST.md">Self-Hosting-Anleitung</a> · <a href="https://github.com/devswha/gajae-app/issues">Probleme melden</a> · <a href="CONTRIBUTING.md">Mitwirken</a>
 </p>
 
 <div align="right"><i><a href="./README.md">English</a> · <a href="./README.ru.md">Русский</a> · <b>Deutsch</b> · <a href="./README.ko.md">한국어</a> · <a href="./README.zh-CN.md">简体中文</a> · <a href="./README.zh-TW.md">繁體中文</a> · <a href="./README.ja.md">日本語</a> · <a href="./README.tr.md">Türkçe</a></i></div>
@@ -32,10 +25,10 @@
 <em>Hauptoberfläche mit Projektübersicht und Chat</em>
 </td>
 <td align="center">
-<h3>Mobile-Erfahrung</h3>
+<h3>Mobile Ansicht</h3>
 <img src="public/screenshots/mobile-chat.png" alt="Mobile-Oberfläche" width="250">
 <br>
-<em>Responsives mobiles Design mit Touch-Navigation</em>
+<em>Responsives Design mit Touch-Navigation</em>
 </td>
 </tr>
 <tr>
@@ -43,213 +36,122 @@
 <h3>CLI-Auswahl</h3>
 <img src="public/screenshots/cli-selection.png" alt="CLI-Auswahl" width="400">
 <br>
-<em>Wähle zwischen Claude Code, Cursor CLI und Codex</em>
+<em>Wähle Claude Code, Cursor CLI oder Codex</em>
 </td>
 </tr>
 </table>
-
-
 
 </div>
 
 ## Funktionen
 
-- **Responsives Design** – Funktioniert nahtlos auf Desktop, Tablet und Mobilgerät, sodass du Agents auch vom Smartphone aus nutzen kannst
-- **Interaktives Chat-Interface** – Eingebaute Chat-Oberfläche für die reibungslose Kommunikation mit den Agents
-- **Integriertes Shell-Terminal** – Direkter Zugriff auf die Agents CLI über die eingebaute Shell-Funktionalität
-- **Datei-Explorer** – Interaktiver Dateibaum mit Syntaxhervorhebung und Live-Bearbeitung
-- **Git-Explorer** – Änderungen anzeigen, stagen und committen. Branches wechseln ebenfalls möglich
-- **Sitzungsverwaltung** – Gespräche fortsetzen, mehrere Sitzungen verwalten und Verlauf nachverfolgen
-- **Plugin-System** – CloudCLI mit eigenen Plugins erweitern – neue Tabs, Backend-Dienste und Integrationen hinzufügen. [Eigenes Plugin erstellen →](https://github.com/cloudcli-ai/cloudcli-plugin-starter)
-- **TaskMaster AI Integration** *(Optional)* – Erweitertes Projektmanagement mit KI-gestützter Aufgabenplanung, PRD-Parsing und Workflow-Automatisierung
-- **Modell-Kompatibilität** – Funktioniert mit den Claude- und GPT-Modellfamilien (vollständige Liste unterstützter Modelle zur Laufzeit über `GET /api/providers/:provider/models`)
-
+- **Responsives Design** – Arbeite auf Desktop, Tablet oder Mobilgerät in deinem lokalen Netzwerk.
+- **Interaktiver Chat** – Kommuniziere mit Agenten in einer integrierten Oberfläche.
+- **Integriertes Shell-Terminal** – Greife über die Oberfläche auf die CLI des gewählten Agenten zu.
+- **Datei-Explorer** – Durchsuche und bearbeite Projektdateien mit Syntaxhervorhebung.
+- **Git-Explorer** – Prüfe Änderungen, stage und committe sie und wechsle Branches.
+- **Sitzungsverwaltung** – Setze Gespräche fort, verwalte mehrere Sitzungen und behalte den Verlauf im Blick.
+- **Skills und MCP-Konfiguration** – Verwalte die für deine lokalen Agenten benötigten Erweiterungen und Verbindungen.
+- **Modell-Kompatibilität** – Nutze die Claude- und GPT-Modellfamilien, die deine installierten Agenten unterstützen.
 
 ## Schnellstart
 
-### CloudCLI Cloud (Empfohlen)
-
-Der schnellste Einstieg – keine lokale Einrichtung erforderlich. Erhalte eine vollständig verwaltete, containerisierte Entwicklungsumgebung, die über Web, Mobile App, API oder deine bevorzugte IDE erreichbar ist.
-
-**[Mit CloudCLI Cloud starten](https://cloudcli.ai)**
-
-
-### Self-Hosted (Open Source)
-
-#### npm
-
-CloudCLI UI sofort mit **npx** ausprobieren (erfordert **Node.js** v22+):
+Gajae App wird aus einem Repository-Checkout betrieben. Du benötigst Git und Node.js 22. Der Lifecycle-Manager installiert eine verwaltete Revision und startet einen Benutzer-Service, der standardmäßig nur an die Loopback-Adresse gebunden ist.
 
 ```bash
-npx @cloudcli-ai/cloudcli
+git clone https://github.com/devswha/gajae-app.git
+cd gajae-app
 ```
 
-Oder **global** installieren für regelmäßige Nutzung:
+Im Checkout die kanonische Repository-URL für den Lifecycle-Manager setzen und eine geprüfte Revision installieren:
 
 ```bash
-npm install -g @cloudcli-ai/cloudcli
-cloudcli
+export GAJAE_APP_REPOSITORY="https://github.com/devswha/gajae-app.git"
+GIT_SHA="$(git rev-parse HEAD)"
+./scripts/gajae-app.sh install \
+  --ref "$GIT_SHA" \
+  --port 3001 \
+  --install-dir "$HOME/.local/share/gajae-app"
 ```
 
-Öffne `http://localhost:3001` – alle vorhandenen Sitzungen werden automatisch erkannt.
+Öffne anschließend `http://127.0.0.1:3001`. Die vollständigen Optionen für Installation, Migration, Wiederherstellung und Betrieb stehen in der [Self-Hosting-Anleitung](docs/SELF-HOST.md).
 
-Die **[Dokumentation →](https://cloudcli.ai/docs)** enthält weitere Konfigurationsoptionen, PM2, Remote-Server-Einrichtung und mehr.
+### Status und Aktualisierung
 
-#### Docker Sandboxes (Experimentell)
+Verwende für den Betriebszustand und die installierte Revision ausschließlich den Lifecycle-Manager. Wähle vor einer Aktualisierung einen geprüften, vollständigen Commit-SHA und bewahre den bisher verwendeten SHA für einen möglichen Rollback auf.
 
-Agents in isolierten Sandboxes mit Hypervisor-Isolation ausführen. Standardmäßig wird Claude Code gestartet. Erfordert die [`sbx` CLI](https://docs.docker.com/ai/sandboxes/get-started/).
-
+```bash
+./scripts/gajae-app.sh status
+./scripts/gajae-app.sh status --json
+GIT_SHA=<geprüfter-vollständiger-Commit-SHA>
+./scripts/gajae-app.sh update --ref "$GIT_SHA"
 ```
-npx @cloudcli-ai/cloudcli@latest sandbox ~/my-project
-```
 
-Unterstützt Claude Code und Codex. Weitere Details in der [Sandbox-Dokumentation](docker/).
+Der Manager überschreibt keine lokalen Änderungen in der verwalteten Installation. Prüfe solche Änderungen bewusst, bevor du den Vorgang erneut ausführst.
 
 ---
 
-## Welche Option passt zu dir?
+## Sicherheit und Zugriff
 
-CloudCLI UI ist die Open-Source-UI-Schicht, die CloudCLI Cloud antreibt. Du kannst es auf deinem eigenen Rechner selbst hosten oder CloudCLI Cloud nutzen, das darauf aufbaut und eine vollständig verwaltete Cloud-Umgebung, Team-Funktionen und tiefere Integrationen bietet.
+Die Oberfläche kann Befehle auf dem Host ausführen. Behandle ihren Zugriff daher wie SSH:
 
-| | CloudCLI UI (Self-hosted) | CloudCLI Cloud |
-|---|---|---|
-| **Am besten für** | Entwickler:innen, die eine vollständige UI für lokale Agent-Sitzungen auf ihrem eigenen Rechner möchten | Teams und Entwickler:innen, die Agents in der Cloud betreiben möchten, überall erreichbar |
-| **Zugriff** | Browser via `[deineIP]:port` | Browser, jede IDE, REST API, n8n |
-| **Einrichtung** | `npx @cloudcli-ai/cloudcli` | Keine Einrichtung erforderlich |
-| **Rechner muss laufen** | Ja | Nein |
-| **Mobiler Zugriff** | Jeder Browser im Netzwerk | Jedes Gerät, native App in Entwicklung |
-| **Verfügbare Sitzungen** | Alle Sitzungen automatisch aus `~/.claude` erkannt | Alle Sitzungen in deiner Cloud-Umgebung |
-| **Unterstützte Agents** | Claude Code, Cursor CLI, Codex | Claude Code, Cursor CLI, Codex |
-| **Datei-Explorer und Git** | Ja, direkt in der UI | Ja, direkt in der UI |
-| **MCP-Konfiguration** | Über UI verwaltet, synchronisiert mit lokalem `~/.claude` | Über UI verwaltet |
-| **IDE-Zugriff** | Deine lokale IDE | Jede IDE, die mit deiner Cloud-Umgebung verbunden ist |
-| **REST API** | Ja | Ja |
-| **n8n-Node** | Nein | Ja |
-| **Team-Sharing** | Nein | Ja |
-| **Plattformkosten** | Kostenlos, Open Source | Ab €7/Monat |
+- Lass die Standardbindung an `127.0.0.1` bestehen, solange kein Fernzugriff erforderlich ist.
+- Verwende für Fernzugriff einen abgesicherten Tunnel oder ein privates Netzwerk und behalte die Authentifizierung aktiviert.
+- Teile keine öffentlich erreichbaren Ports und überprüfe regelmäßig, welche Projekte und Sitzungen verfügbar sind.
 
-> Beide Optionen verwenden deine eigenen KI-Abonnements (Claude, Cursor usw.) – CloudCLI stellt die Umgebung bereit, nicht die KI.
-
----
-
-## Sicherheit & Tool-Konfiguration
-
-**🔒 Wichtiger Hinweis**: Alle Claude Code Tools sind **standardmäßig deaktiviert**. Dies verhindert, dass potenziell schädliche Operationen automatisch ausgeführt werden.
-
-### Tools aktivieren
-
-Um den vollen Funktionsumfang von Claude Code zu nutzen, müssen Tools manuell aktiviert werden:
-
-1. **Tool-Einstellungen öffnen** – Klicke auf das Zahnrad-Symbol in der Seitenleiste
-2. **Selektiv aktivieren** – Nur die benötigten Tools einschalten
-3. **Einstellungen übernehmen** – Deine Einstellungen werden lokal gespeichert
-
-<div align="center">
-
-![Tool-Einstellungen Modal](public/screenshots/tools-modal.png)
-*Tool-Einstellungen – nur aktivieren, was benötigt wird*
-
-</div>
-
-**Empfohlene Vorgehensweise**: Mit grundlegenden Tools starten und bei Bedarf weitere hinzufügen. Die Einstellungen können jederzeit angepasst werden.
-
----
-
-## Plugins
-
-CloudCLI verfügt über ein Plugin-System, mit dem benutzerdefinierte Tabs mit eigener Frontend-UI und optionalem Node.js-Backend hinzugefügt werden können. Plugins können direkt in **Einstellungen > Plugins** aus Git-Repos installiert oder selbst entwickelt werden.
-
-### Verfügbare Plugins
-
-| Plugin | Beschreibung |
-|---|---|
-| **[Project Stats](https://github.com/cloudcli-ai/cloudcli-plugin-starter)** | Zeigt Dateianzahl, Codezeilen, Dateityp-Aufschlüsselung, größte Dateien und zuletzt geänderte Dateien des aktuellen Projekts |
-| **[Web Terminal](https://github.com/cloudcli-ai/cloudcli-plugin-terminal)** | Vollwertiges xterm.js-Terminal mit Multi-Tab-Unterstützung |
-| **[Claude Watch](https://github.com/satsuki19980613/cloudcli-claude-watch)** | Überwacht lange laufende Claude-Code-Sitzungen auf Hänger und stellt Prozesssteuerungen bereit |
-| **[CloudCLI Scheduler](https://github.com/grostim/cloudcli-cron)** | Erstellt arbeitsbereichsbezogene geplante Prompts und führt sie über eine lokale CLI wie Codex oder Claude Code aus |
-| **[PRISM CloudCLI](https://github.com/jakeefr/cloudcli-plugin-prism)** | Sitzungsintelligenz für Claude Code in CloudCLI, inklusive Sichtbarkeit des Token-Verbrauchs |
-| **[Sessions](https://github.com/strykereye2/cloudcli-plugin-session-manager)** | Aktive Claude-Code-Sitzungen anzeigen, verwalten und beenden |
-| **[Token Cost Calculator](https://github.com/NightmareAway/cloudcli-plugin-token-cost-calculator)** | API-Kosten anhand von Modellpreisen und Token-Nutzung berechnen, mit Unterstützung für Preisvorlagen |
-| **[Task Queue](https://github.com/TadMSTR/cloudcli-plugin-task-queue)** | Task-Queue-Dashboard zum Anzeigen, Filtern und Starten von Agent-Aufgaben |
-| **[GitHub Issues Board](https://github.com/szmidtpiotr/claude-github-issue)** | Kanban-Board für GitHub Issues mit bidirektionaler TaskMaster-Synchronisierung und automatischer Installation des /github-task CLI-Skills |
-
-### Eigenes Plugin erstellen
-
-**[Plugin-Starter-Vorlage →](https://github.com/cloudcli-ai/cloudcli-plugin-starter)** – Forke dieses Repository, um ein eigenes Plugin zu erstellen. Es enthält ein funktionierendes Beispiel mit Frontend-Rendering, Live-Kontext-Updates und RPC-Kommunikation zu einem Backend-Server.
-
-**[Plugin-Dokumentation →](https://cloudcli.ai/docs/plugin-overview)** – Vollständige Anleitung zur Plugin-API, zum Manifest-Format, zum Sicherheitsmodell und mehr.
-
----
 ## FAQ
 
 <details>
-<summary>Wie unterscheidet sich das von Claude Code Remote Control?</summary>
+<summary>Wirkt sich die Oberfläche auf meine lokale Agenten-Konfiguration aus?</summary>
 
-Claude Code Remote Control ermöglicht es, Nachrichten an eine bereits im lokalen Terminal laufende Sitzung zu senden. Der Rechner muss eingeschaltet bleiben, das Terminal muss offen bleiben, und Sitzungen laufen nach etwa 10 Minuten ohne Netzwerkverbindung ab.
-
-CloudCLI UI und CloudCLI Cloud erweitern Claude Code, anstatt neben ihm zu laufen – MCP-Server, Berechtigungen, Einstellungen und Sitzungen sind exakt dieselben, die Claude Code nativ verwendet. Nichts wird dupliziert oder separat verwaltet.
-
-Das bedeutet in der Praxis:
-
-- **Alle Sitzungen, nicht nur eine** – CloudCLI UI erkennt automatisch jede Sitzung aus dem `~/.claude`-Ordner. Remote Control stellt nur die einzelne aktive Sitzung bereit, um sie in der Claude Mobile App verfügbar zu machen.
-- **Deine Einstellungen sind deine Einstellungen** – MCP-Server, Tool-Berechtigungen und Projektkonfiguration, die in CloudCLI UI geändert werden, werden direkt in die Claude Code-Konfiguration geschrieben und treten sofort in Kraft – und umgekehrt.
-- **Funktioniert mit mehr Agents** – Claude Code, Cursor CLI und Codex, nicht nur Claude Code.
-- **Vollständige UI, nicht nur ein Chat-Fenster** – Datei-Explorer, Git-Integration, MCP-Verwaltung und ein Shell-Terminal sind alle eingebaut.
-- **CloudCLI Cloud läuft in der Cloud** – Laptop zuklappen, der Agent läuft weiter. Kein Terminal zu überwachen, kein Rechner, der laufen muss.
+Ja. Gajae App arbeitet mit den lokalen Projekten, Sitzungen und Agenten-Konfigurationen auf dem Host. Prüfe Änderungen an Berechtigungen, MCP-Servern und Projektdateien so sorgfältig wie Änderungen in einem Terminal.
 
 </details>
 
 <details>
-<summary>Muss ich ein KI-Abonnement separat bezahlen?</summary>
+<summary>Kann ich sie auf einem Mobilgerät verwenden?</summary>
 
-Ja. CloudCLI stellt die Umgebung bereit, nicht die KI. Du bringst dein eigenes Claude-, Cursor- oder Codex-Abonnement mit. CloudCLI Cloud beginnt bei €7/Monat für die gehostete Umgebung zusätzlich dazu.
-
-</details>
-
-<details>
-<summary>Kann ich CloudCLI UI auf meinem Smartphone nutzen?</summary>
-
-Ja. Bei Self-Hosted: Server auf dem eigenen Rechner starten und `[deineIP]:port` in einem beliebigen Browser im Netzwerk öffnen. Bei CloudCLI Cloud: Von jedem Gerät aus öffnen – kein VPN, keine Portweiterleitung, keine Einrichtung. Eine native App ist ebenfalls in Entwicklung.
+Ja. Für den lokalen Zugriff öffnest du die Adresse des laufenden Dienstes in einem Browser. Wenn Zugriff von einem anderen Gerät nötig ist, richte ihn bewusst über ein privates Netzwerk oder einen abgesicherten Tunnel ein.
 
 </details>
 
 <details>
-<summary>Wirken sich Änderungen in der UI auf mein lokales Claude Code-Setup aus?</summary>
+<summary>Wie stelle ich eine frühere Version wieder her?</summary>
 
-Ja, bei Self-Hosted. CloudCLI UI liest aus und schreibt in dieselbe `~/.claude`-Konfiguration, die Claude Code nativ verwendet. MCP-Server, die über die UI hinzugefügt werden, erscheinen sofort in Claude Code und umgekehrt.
+Notiere vor jedem Update den geprüften Commit-SHA. Aktualisiere dann mit dem zuvor verwendeten SHA und prüfe anschließend den Status über den Lifecycle-Manager. Die [Self-Hosting-Anleitung](docs/SELF-HOST.md) beschreibt die Wiederherstellung im Detail.
 
 </details>
 
 ---
 
-## Community & Support
+## Unterstützung und Mitwirkung
 
-- **[Dokumentation](https://cloudcli.ai/docs)** — Installation, Konfiguration, Funktionen und Fehlerbehebung
-- **[Discord](https://discord.gg/buxwujPNRE)** — Hilfe erhalten und mit anderen Nutzer:innen in Kontakt treten
-- **[GitHub Issues](https://github.com/siteboon/claudecodeui/issues)** — Fehlerberichte und Feature-Anfragen
-- **[Beitragsrichtlinien](CONTRIBUTING.md)** — So kannst du zum Projekt beitragen
+- **[Self-Hosting-Anleitung](docs/SELF-HOST.md)** — Installation, Betrieb und Wiederherstellung
+- **[GitHub Issues](https://github.com/devswha/gajae-app/issues)** — Fehlerberichte und Funktionswünsche
+- **[Beitragsrichtlinien](CONTRIBUTING.md)** — So wirkst du am Projekt mit
 
 ## Lizenz
 
-GNU General Public License v3.0 – siehe [LICENSE](LICENSE)-Datei für Details.
+GNU General Public License v3.0 – Details stehen in der Datei [LICENSE](LICENSE).
 
-Dieses Projekt ist Open Source und kann unter der GPL v3-Lizenz kostenlos genutzt, modifiziert und verteilt werden.
+Dieses Projekt ist Open Source und darf unter der GPL v3 kostenlos verwendet, verändert und weitergegeben werden.
+
+<!-- upstream-lineage:start -->
+Upstream lineage: Gajae App is derived from [CloudCLI UI](https://github.com/siteboon/claudecodeui). Required attribution and license terms are preserved in [LICENSE](LICENSE) and [NOTICE](NOTICE).
+<!-- upstream-lineage:end -->
 
 ## Danksagungen
 
 ### Erstellt mit
-- **[Claude Code](https://docs.anthropic.com/en/docs/claude-code)** - Anthropics offizielle CLI
-- **[Cursor CLI](https://docs.cursor.com/en/cli/overview)** - Cursors offizielle CLI
-- **[Codex](https://developers.openai.com/codex)** - OpenAI Codex
-- **[React](https://react.dev/)** - UI-Bibliothek
-- **[Vite](https://vitejs.dev/)** - Schnelles Build-Tool und Dev-Server
-- **[Tailwind CSS](https://tailwindcss.com/)** - Utility-first CSS-Framework
-- **[CodeMirror](https://codemirror.net/)** - Erweiterter Code-Editor
-- **[TaskMaster AI](https://github.com/eyaltoledano/claude-task-master)** *(Optional)* - KI-gestütztes Projektmanagement und Aufgabenplanung
 
+- **[Claude Code](https://docs.anthropic.com/en/docs/claude-code)** – Anthropics offizielle CLI
+- **[Cursor CLI](https://docs.cursor.com/en/cli/overview)** – Cursors offizielle CLI
+- **[Codex](https://developers.openai.com/codex)** – OpenAI Codex
+- **[React](https://react.dev/)** – UI-Bibliothek
+- **[Vite](https://vitejs.dev/)** – Build-Tool und Entwicklungsserver
+- **[Tailwind CSS](https://tailwindcss.com/)** – Utility-first-CSS-Framework
+- **[CodeMirror](https://codemirror.net/)** – Code-Editor
 
-### Sponsoren
-- [Siteboon - KI-gestützter Website-Builder](https://siteboon.ai)
 ---
 
 <div align="center">

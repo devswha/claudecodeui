@@ -1,19 +1,17 @@
-import fs from 'node:fs/promises';
-import path from 'node:path';
 import { Notification } from 'electron';
 import WebSocket from 'ws';
 
+import { getTargetOrigin, getTargetPartition } from './targetSessions.js';
+
 const RECONNECT_MIN_MS = 1000;
 const RECONNECT_MAX_MS = 30000;
-const TARGET_REGISTER_TIMEOUT_MS = 8000;
+const TARGET_NOTIFICATION_TIMEOUT_MS = 3000;
 
-function toNotificationsWsUrl(httpUrl) {
+function toNotificationsWsUrl(target) {
   try {
-    const parsed = new URL(httpUrl);
+    const parsed = new URL(getTargetOrigin(target));
     parsed.protocol = parsed.protocol === 'http:' ? 'ws:' : 'wss:';
     parsed.pathname = '/desktop-notifications';
-    parsed.search = '';
-    parsed.hash = '';
     return parsed.toString();
   } catch {
     return null;
@@ -28,271 +26,145 @@ function readJsonMessage(raw) {
   }
 }
 
-async function requestJson(url, { method = 'POST', body = null, headers = {} } = {}) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), TARGET_REGISTER_TIMEOUT_MS);
-  try {
-    const response = await fetch(url, {
-      method,
-      signal: controller.signal,
-      headers: {
-        'Content-Type': 'application/json',
-        ...headers,
-      },
-      ...(body == null ? {} : { body: JSON.stringify(body) }),
-    });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(payload.error || `Request failed with status ${response.status}`);
-    }
-    return payload;
-  } finally {
-    clearTimeout(timeout);
-  }
+function getTargetFromRegistryEntry(entry) {
+  return {
+    kind: 'remote',
+    id: entry?.id,
+    name: entry?.name,
+    url: entry?.url,
+  };
 }
 
 export class DesktopNotificationsController {
-  constructor({
-    settingsPath,
-    appVersion,
-    appName,
-    getDeviceId,
-    getAccountEmail,
-    getRunningEnvironmentUrls,
-    getApiKey,
-    getAuthToken,
-    getIconPath,
-    openNotificationTarget,
-    onChange,
-  }) {
-    this.settingsPath = settingsPath;
-    this.appVersion = appVersion;
-    this.appName = appName;
-    this.getDeviceId = getDeviceId;
-    this.getAccountEmail = getAccountEmail;
-    this.getRunningEnvironmentUrls = getRunningEnvironmentUrls;
-    this.getApiKey = getApiKey;
-    this.getAuthToken = getAuthToken;
-    this.getIconPath = getIconPath;
-    this.openNotificationTarget = openNotificationTarget;
-    this.onChange = onChange;
-    this.settings = { enabled: false };
+  constructor({ getRemoteTargets, getTargetSession, getActiveTargetId }) {
+    this.getRemoteTargets = getRemoteTargets;
+    this.getTargetSession = getTargetSession;
+    this.getActiveTargetId = getActiveTargetId;
     this.connections = new Map();
     this.lastEvent = null;
     this.lastError = null;
   }
 
   getState() {
-    const connectedTargets = [];
-    for (const [url, connection] of this.connections.entries()) {
+    const connectedTargetIds = [];
+    for (const [targetId, connection] of this.connections.entries()) {
       if (connection.ws?.readyState === WebSocket.OPEN) {
-        connectedTargets.push(url);
+        connectedTargetIds.push(targetId);
       }
     }
 
     return {
-      enabled: this.settings.enabled,
       supported: Notification.isSupported(),
       targetCount: this.connections.size,
-      connectedCount: connectedTargets.length,
-      connectedTargets,
+      connectedCount: connectedTargetIds.length,
+      connectedTargetIds,
+      activeTargetId: this.getActiveTargetId?.() || null,
       lastEvent: this.lastEvent,
       lastError: this.lastError,
     };
   }
 
-  async loadSettings() {
-    try {
-      const raw = await fs.readFile(this.settingsPath, 'utf8');
-      const stored = JSON.parse(raw);
-      this.settings = { enabled: Boolean(stored.enabled) };
-    } catch {
-      this.settings = { enabled: false };
-    }
-    return this.settings;
-  }
-
-  async saveSettings(next) {
-    const enabled = Boolean(next?.enabled);
-    if (!enabled && this.settings.enabled) {
-      await this.disableCurrentTargets();
-    }
-    this.settings = { enabled };
-    await fs.mkdir(path.dirname(this.settingsPath), { recursive: true });
-    await fs.writeFile(this.settingsPath, JSON.stringify(this.settings, null, 2), 'utf8');
-    await this.sync();
-    this.onChange?.();
-    return this.settings;
-  }
-
   async sync() {
-    if (!this.settings.enabled) {
-      this.stop();
-      this.lastEvent = 'disabled';
-      this.onChange?.();
-      return;
-    }
-
     if (!Notification.isSupported()) {
       this.stop();
       this.lastEvent = 'unsupported';
       this.lastError = 'Native notifications are not supported on this system.';
-      this.onChange?.();
       return;
     }
 
-    const deviceId = this.getDeviceId?.();
-    if (!deviceId) {
-      this.stop();
-      this.lastEvent = 'missing-device';
-      this.lastError = 'Connect a CloudCLI account before enabling desktop notifications.';
-      this.onChange?.();
-      return;
-    }
+    const activeTargetId = this.getActiveTargetId?.();
+    const activeTarget = (this.getRemoteTargets?.() || [])
+      .map(getTargetFromRegistryEntry)
+      .find((target) => target.id === activeTargetId);
+    const targets = [];
 
-    const targets = (this.getRunningEnvironmentUrls?.() || [])
-      .map((httpUrl) => ({
-        httpUrl,
-        wsUrl: toNotificationsWsUrl(httpUrl),
-      }))
-      .filter((target) => target.wsUrl);
-
-    const nextWsUrls = new Set(targets.map((target) => target.wsUrl));
-    for (const [wsUrl, connection] of this.connections.entries()) {
-      if (!nextWsUrls.has(wsUrl)) {
-        this.closeConnection(connection);
-        this.connections.delete(wsUrl);
+    if (activeTarget) {
+      const wsUrl = toNotificationsWsUrl(activeTarget);
+      try {
+        getTargetPartition(activeTarget);
+        const targetSession = await Promise.resolve(this.getTargetSession?.(activeTarget.id, activeTarget));
+        if (!targetSession) {
+          throw new Error('Missing dedicated target session.');
+        }
+        if (!wsUrl) {
+          throw new Error('Invalid target notification origin.');
+        }
+        targets.push({ target: activeTarget, wsUrl });
+      } catch {
+        this.lastEvent = 'invalid-target';
+        this.lastError = `Refusing notifications for target ${String(activeTarget.id || '')}.`;
       }
     }
 
-    for (const target of targets) {
-      if (!this.connections.has(target.wsUrl)) {
-        void this.connect(target).catch((error) => {
+    const nextTargetIds = new Set(targets.map(({ target }) => target.id));
+    for (const [targetId, connection] of this.connections.entries()) {
+      if (!nextTargetIds.has(targetId)
+        || connection.target.url !== targets.find(({ target }) => target.id === targetId)?.target.url) {
+        this.closeConnection(connection);
+        this.connections.delete(targetId);
+      }
+    }
+
+    for (const connectionTarget of targets) {
+      if (!this.connections.has(connectionTarget.target.id)) {
+        void this.connect(connectionTarget).catch((error) => {
           this.lastEvent = 'connect-error';
           this.lastError = error instanceof Error ? error.message : String(error);
-          this.onChange?.();
         });
       }
     }
 
     this.lastEvent = targets.length ? 'sync' : 'no-targets';
-    this.onChange?.();
+    if (targets.length) this.lastError = null;
   }
 
-  async connect(target, attempt = 0) {
-    const existing = this.connections.get(target.wsUrl);
+
+  async connect({ target, wsUrl }, attempt = 0) {
+    const existing = this.connections.get(target.id);
     if (existing?.ws && [WebSocket.CONNECTING, WebSocket.OPEN].includes(existing.ws.readyState)) {
       return;
     }
 
     const connection = {
-      ...target,
+      target,
+      wsUrl,
       ws: null,
       reconnectTimer: null,
       closed: false,
       attempt,
     };
-    this.connections.set(target.wsUrl, connection);
-
-    const headers = await this.getTargetAuthHeaders(target.httpUrl);
-    if (connection.closed || this.connections.get(target.wsUrl) !== connection) {
-      return;
+    this.connections.set(target.id, connection);
+    const targetSession = await Promise.resolve(this.getTargetSession?.(target.id, target));
+    if (!targetSession) {
+      throw new Error(`Target ${target.id} does not have a dedicated session.`);
     }
 
-    const ws = new WebSocket(target.wsUrl, { headers: Object.keys(headers).length ? headers : undefined });
+    if (connection.closed || this.connections.get(target.id) !== connection) return;
+
+    const ws = new WebSocket(wsUrl, { handshakeTimeout: TARGET_NOTIFICATION_TIMEOUT_MS });
     connection.ws = ws;
 
-    ws.on('open', async () => {
-      try {
-        await this.registerTarget(target.httpUrl);
-        ws.send(JSON.stringify({
-          type: 'register',
-          deviceId: this.getDeviceId?.(),
-          label: this.getAccountEmail?.() || this.appName,
-          platform: process.platform,
-          appVersion: this.appVersion,
-        }));
-        connection.attempt = 0;
-        this.lastEvent = 'connected';
-        this.lastError = null;
-        this.onChange?.();
-      } catch (error) {
-        this.lastEvent = 'register-error';
-        this.lastError = error instanceof Error ? error.message : String(error);
-        this.onChange?.();
-        try { ws.close(); } catch {}
-      }
+    ws.on('open', () => {
+      ws.send(JSON.stringify({ type: 'register', targetId: target.id }));
+      connection.attempt = 0;
+      this.lastEvent = 'connected';
+      this.lastError = null;
     });
-
     ws.on('message', (raw) => this.handleMessage(target, ws, raw));
-    ws.on('close', () => this.scheduleReconnect(target.wsUrl));
+    ws.on('close', () => this.scheduleReconnect(target.id));
     ws.on('error', (error) => {
       this.lastEvent = 'socket-error';
       this.lastError = error instanceof Error ? error.message : String(error);
-      this.onChange?.();
     });
-  }
-
-  async registerTarget(httpUrl) {
-    const url = new URL('/api/notifications/endpoints/current', httpUrl).toString();
-    await requestJson(url, {
-      method: 'POST',
-      headers: await this.getTargetAuthHeaders(httpUrl),
-      body: {
-        channel: 'desktop',
-        endpointId: this.getDeviceId?.(),
-        label: this.getAccountEmail?.() || this.appName,
-        metadata: {
-          platform: process.platform,
-          appVersion: this.appVersion,
-        },
-        enabled: true,
-      },
-    });
-  }
-
-  async disableCurrentTargets() {
-    const deviceId = this.getDeviceId?.();
-    if (!deviceId) return;
-
-    const targets = new Set([
-      ...[...this.connections.values()].map((connection) => connection.httpUrl).filter(Boolean),
-      ...(this.getRunningEnvironmentUrls?.() || []),
-    ]);
-
-    const results = await Promise.allSettled([...targets].map(async (httpUrl) => {
-      const url = new URL(`/api/notifications/endpoints/desktop/${encodeURIComponent(deviceId)}`, httpUrl).toString();
-      await requestJson(url, {
-        method: 'PATCH',
-        headers: await this.getTargetAuthHeaders(httpUrl),
-        body: { enabled: false },
-      });
-    }));
-
-    const rejected = results.find((result) => result.status === 'rejected');
-    if (rejected) {
-      this.lastEvent = 'disable-endpoint-error';
-      this.lastError = rejected.reason instanceof Error ? rejected.reason.message : String(rejected.reason);
-    }
-  }
-
-  async getTargetAuthHeaders(httpUrl) {
-    const headers = {};
-    const apiKey = this.getApiKey?.();
-    if (apiKey) {
-      headers['X-API-Key'] = apiKey;
-    }
-
-    const authToken = await Promise.resolve(this.getAuthToken?.(httpUrl)).catch(() => null);
-    if (authToken) {
-      headers.Authorization = `Bearer ${authToken}`;
-    }
-    return headers;
   }
 
   handleMessage(target, ws, raw) {
     const message = readJsonMessage(raw);
-    if (!message || message.type !== 'notification' || !message.payload) {
+    if (!message || message.type !== 'notification' || !message.payload) return;
+
+    const notificationTargetId = message.targetId || message.payload?.data?.targetId;
+    if (notificationTargetId !== target.id) {
+      this.lastEvent = 'rejected-target-mismatch';
       return;
     }
 
@@ -300,6 +172,7 @@ export class DesktopNotificationsController {
     if (shown && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({
         type: 'notification_ack',
+        targetId: target.id,
         id: message.id || message.payload?.data?.tag || null,
         action: 'shown',
       }));
@@ -310,53 +183,37 @@ export class DesktopNotificationsController {
     if (!Notification.isSupported()) return false;
 
     const notification = new Notification({
-      title: payload.title || this.appName,
+      title: payload.title || target.name || 'Gajae App',
       body: payload.body || '',
-      icon: this.getIconPath?.(),
       silent: false,
     });
-
     notification.on('click', () => {
-      void this.openNotificationTarget?.({
-        environmentUrl: target.httpUrl,
-        sessionId: payload.data?.sessionId || null,
-        provider: payload.data?.provider || null,
-      }).catch((error) => {
-        this.lastEvent = 'click-error';
-        this.lastError = error instanceof Error ? error.message : String(error);
-        this.onChange?.();
-      });
+      this.lastEvent = `clicked:${target.id}`;
     });
-
     notification.show();
     this.lastEvent = 'notification-shown';
     this.lastError = null;
-    this.onChange?.();
     return true;
   }
 
-  scheduleReconnect(wsUrl) {
-    const connection = this.connections.get(wsUrl);
-    if (!connection || connection.closed || !this.settings.enabled) {
-      return;
-    }
+  scheduleReconnect(targetId) {
+    const connection = this.connections.get(targetId);
+    if (!connection || connection.closed) return;
 
     const attempt = connection.attempt + 1;
     connection.attempt = attempt;
     const delay = Math.min(RECONNECT_MAX_MS, RECONNECT_MIN_MS * (2 ** Math.min(attempt, 5)));
     connection.reconnectTimer = setTimeout(() => {
-      if (!this.connections.has(wsUrl) || !this.settings.enabled) return;
+      if (!this.connections.has(targetId)) return;
       void this.connect({
-        httpUrl: connection.httpUrl,
+        target: connection.target,
         wsUrl: connection.wsUrl,
       }, attempt).catch((error) => {
         this.lastEvent = 'connect-error';
         this.lastError = error instanceof Error ? error.message : String(error);
-        this.onChange?.();
       });
     }, delay);
     this.lastEvent = 'reconnecting';
-    this.onChange?.();
   }
 
   closeConnection(connection) {
@@ -373,6 +230,5 @@ export class DesktopNotificationsController {
       this.closeConnection(connection);
     }
     this.connections.clear();
-    this.onChange?.();
   }
 }

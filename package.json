@@ -1,13 +1,14 @@
 {
-  "name": "@cloudcli-ai/cloudcli",
+  "name": "gajae-app",
+  "private": true,
   "version": "1.36.1",
   "desktopVersion": "0.2.0",
-  "productName": "GajaeCode",
+  "productName": "Gajae App",
   "description": "A web-based UI for Claude Code CLI",
   "type": "module",
   "main": "dist-server/server/index.js",
   "bin": {
-    "cloudcli": "dist-server/server/cli.js"
+    "gajae-app": "dist-server/server/cli.js"
   },
   "files": [
     "electron/",
@@ -19,13 +20,13 @@
     "scripts/",
     "README.md"
   ],
-  "homepage": "https://cloudcli.ai",
+  "homepage": "https://github.com/devswha/gajae-app",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/siteboon/claudecodeui.git"
+    "url": "git+https://github.com/devswha/gajae-app.git"
   },
   "bugs": {
-    "url": "https://github.com/siteboon/claudecodeui/issues"
+    "url": "https://github.com/devswha/gajae-app/issues"
   },
   "scripts": {
     "dev": "concurrently --kill-others \"npm run server:dev\" \"npm run client\"",
@@ -48,21 +49,19 @@
     "build:server": "tsc -p server/tsconfig.json && tsc-alias -p server/tsconfig.json",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p server/tsconfig.json",
+    "check:identity": "node scripts/check-identity.mjs",
     "lint": "eslint src/ server/",
     "lint:fix": "eslint src/ server/ --fix",
     "start": "npm run build && npm run server",
-    "release": "./release.sh",
-    "prepublishOnly": "npm run build",
     "postinstall": "node scripts/fix-node-pty.js",
-    "prepare": "husky",
-    "update:platform": "./update-platform.sh"
+    "prepare": "husky"
   },
   "build": {
-    "appId": "help.vibetip.gjc.desktop",
-    "productName": "GajaeCode",
+    "appId": "app.gajae.desktop",
+    "productName": "Gajae App",
     "asar": false,
-    "executableName": "gajaecode",
-    "artifactName": "gajaecode-desktop-${version}-${os}-${arch}.${ext}",
+    "executableName": "gajae-app",
+    "artifactName": "gajae-app-desktop-${version}-${os}-${arch}.${ext}",
     "directories": {
       "output": "release/desktop"
     },
@@ -81,9 +80,9 @@
     ],
     "protocols": [
       {
-        "name": "CloudCLI",
+        "name": "Gajae App",
         "schemes": [
-          "cloudcli"
+          "gajae-app"
         ]
       }
     ],
@@ -95,13 +94,13 @@
         "dmg"
       ],
       "extendInfo": {
-        "CFBundleName": "GajaeCode",
-        "CFBundleDisplayName": "가재코드",
+        "CFBundleName": "Gajae App",
+        "CFBundleDisplayName": "Gajae App",
         "CFBundleURLTypes": [
           {
-            "CFBundleURLName": "GajaeCode",
+            "CFBundleURLName": "Gajae App",
             "CFBundleURLSchemes": [
-              "cloudcli"
+              "gajae-app"
             ]
           }
         ]
@@ -117,7 +116,7 @@
       "icon": "public/icons/icon-512x512.png",
       "category": "Development",
       "maintainer": "devswha <devswha@gmail.com>",
-      "synopsis": "가재코드(Gajae Code) desktop app",
+      "synopsis": "Gajae App desktop app",
       "target": [
         "AppImage",
         "deb"
@@ -125,10 +124,10 @@
     }
   },
   "keywords": [
+    "gajae-app",
     "claude code",
     "claude-code",
     "claude-code-ui",
-    "cloudcli",
     "codex",
     "cursor",
     "cursor-cli",
@@ -140,8 +139,11 @@
     "ui",
     "mobile IDE"
   ],
-  "author": "CloudCLI UI Contributors",
+  "author": "devswha and Gajae App contributors",
   "license": "AGPL-3.0-or-later",
+  "engines": {
+    "node": ">=22 <23"
+  },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.165",
     "@codemirror/lang-css": "^6.3.1",

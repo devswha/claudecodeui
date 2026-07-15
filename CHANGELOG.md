@@ -1,8 +1,30 @@
-# Changelog
+# Gajae App changelog
 
-All notable changes to CloudCLI UI will be documented in this file.
+All notable changes to Gajae App are documented in this file. Current and
+future server artifacts are published only through
+[GitHub Releases](https://github.com/devswha/gajae-app/releases).
 
+## Unreleased
 
+### Native server distribution and operations
+
+- Established the Linux x86_64, glibc 2.35+, Node.js 22 server artifact:
+  `gajae-app-server-<version>-linux-x64-node22.tar.gz`.
+- Established `~/.local/share/gajae-app` as the source-review checkout and
+  `~/.gajae-app` as the runtime, release, and persistent-data root.
+- Established the per-user `gajae-app.service`, atomic release cutover, and
+  rollback guidance.
+- Documented manual, selective upstream intake with attribution, legal,
+  focused-test, and identity-scan requirements. Automated synchronization is
+  prohibited.
+
+## Historical upstream provenance
+
+The entries and links below are preserved historical provenance from the
+original upstream. They are not Gajae App release locations or active
+installation, service, or publication instructions.
+
+<!-- historical-upstream-provenance:start -->
 ## [1.36.1](https://github.com/siteboon/claudecodeui/compare/v1.36.0...v1.36.1) (2026-07-08)
 
 ### New Features
@@ -494,3 +516,4 @@ All notable changes to CloudCLI UI will be documented in this file.
 ### Maintenance
 
 * update @anthropic-ai/claude-agent-sdk to version 0.1.77 in package-lock.json ([#410](https://github.com/siteboon/claudecodeui/issues/410)) ([7ccbc8d](https://github.com/siteboon/claudecodeui/commit/7ccbc8d92d440e18c157b656c9ea2635044a64f6))
+<!-- historical-upstream-provenance:end -->

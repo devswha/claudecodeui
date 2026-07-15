@@ -1,70 +1,144 @@
-# Self-hosting guide (GajaeCode web UI)
+# Self-hosting Gajae App
 
-The web UI can run shell commands on the host machine. Treat the server port
-like an SSH port: **whoever reaches it (authenticated) controls the machine.**
-The defaults below are fail-closed so a fresh install is never exposed by accident.
+Gajae App is self-hosted from the **GitHub Releases** server artifact only:
 
-## Quickstart (same machine)
+<https://github.com/devswha/gajae-app/releases>
+
+The canonical artifact is
+`gajae-app-server-<version>-linux-x64-node22.tar.gz`, accompanied by an
+artifact with the same name plus `.sha256`. Do not substitute a package
+registry, container image, desktop delivery, or an unverified source build.
+
+## Supported target and filesystem layout
+
+The first supported artifact target is Linux on x86_64 with glibc 2.35 or
+newer and a Node.js 22 runtime. It is a server artifact only.
+
+| Path | Purpose |
+|---|---|
+| `~/.local/share/gajae-app` | Canonical Git checkout for source review and manual upstream intake. It is not a release payload. |
+| `~/.gajae-app/releases/<version>` | Immutable unpacked server artifacts. |
+| `~/.gajae-app/current` | Symlink to the release used by the service. |
+| `~/.gajae-app/data` | Persistent application data, including user-managed database, assets, and cache paths. |
+| `~/.config/systemd/user/gajae-app.service` | Per-user systemd service. |
+
+A release deployment must never create, replace, or delete the checkout.
+Likewise, replacing a release must not delete `~/.gajae-app/data`.
+
+Before the first deployment, confirm the host contract:
 
 ```sh
-npm run build          # once, or use the packaged dist-server
-node dist-server/server/cli.js start
-# → http://localhost:3001 — create your account on first visit
+test "$(uname -s)" = Linux
+test "$(uname -m)" = x86_64
+getconf GNU_LIBC_VERSION    # requires glibc 2.35 or newer
+node --version              # requires v22
 ```
 
-By default the server binds `127.0.0.1` (loopback only). Nothing outside the
-machine can reach it, and no login is possible until you create the first
-account locally.
+Use the release-install procedure in [INSTALL.md](INSTALL.md) to verify the
+checksum, unpack a versioned release, install `gajae-app.service`, and activate
+the initial `current` link.
 
-## Access from other devices — pick ONE lane
+## Service operations
 
-Preferred order: VPN > SSH tunnel > direct bind.
-
-### 1. Tailscale (recommended)
-
-Keeps the server on loopback; Tailscale handles device identity + encryption.
+Gajae App runs as the per-user `gajae-app.service`; root privileges and a
+system-wide unit are not required.
 
 ```sh
-tailscale serve --bg 3001
-# → https://<machine>.<tailnet>.ts.net from any of your devices
+systemctl --user status gajae-app.service
+systemctl --user restart gajae-app.service
+journalctl --user -u gajae-app.service -f
+curl --fail http://127.0.0.1:3001/health
 ```
 
-### 2. SSH tunnel
+Use `loginctl enable-linger "$USER"` only when the host policy permits the
+service to continue after logout.
+
+Keep the service on loopback unless remote access is deliberately required.
+Prefer a trusted VPN or an SSH tunnel; do not expose the server by raw public
+port forwarding.
 
 ```sh
 ssh -N -L 3001:127.0.0.1:3001 user@server
-# → http://localhost:3001 on the client
 ```
 
-### 3. Direct network bind (last resort)
+## Cutover to a verified release
+
+A cutover changes only the `current` symlink and then restarts the service.
+Download and checksum-verify the next artifact exactly as described in
+[INSTALL.md](INSTALL.md); do not use a moving `latest` URL.
+
+1. Record the active release before touching `current`.
+2. Unpack the verified artifact into its new
+   `~/.gajae-app/releases/<version>` directory.
+3. Confirm that the expected server entry point is present.
+4. Atomically replace `current`, restart the service, and check both systemd
+   state and the health endpoint.
+5. Keep the prior release directory until the new release is accepted.
 
 ```sh
-node dist-server/server/cli.js start --host 0.0.0.0   # or HOST=0.0.0.0
+RUNTIME="$HOME/.gajae-app"
+VERSION=<approved-version>
+RELEASE_DIR="$RUNTIME/releases/$VERSION"
+PREVIOUS="$(readlink -f "$RUNTIME/current")"
+
+test -f "$RELEASE_DIR/dist-server/server/index.js"
+printf '%s\n' "$PREVIOUS" > "$RUNTIME/previous-release"
+ln -s "$RELEASE_DIR" "$RUNTIME/current.next"
+mv -Tf "$RUNTIME/current.next" "$RUNTIME/current"
+
+systemctl --user restart gajae-app.service
+systemctl --user --no-pager --full status gajae-app.service
+curl --fail http://127.0.0.1:3001/health
 ```
 
-Rules enforced by the server (see `server/utils/exposure-guard.js`):
+If the service or health check fails, perform the rollback immediately rather
+than troubleshooting against a partially accepted release.
 
-- **No account yet → the server refuses to start** on a non-loopback host.
-  Create the account via loopback first, then restart with `--host`.
-  Escape hatch for a trusted network: `ALLOW_REMOTE_SETUP=1` (loud warning).
-- Account exists → it starts, with a `[SECURITY]` exposure warning. Auth (JWT,
-  bcrypt password) is enforced on every route and WebSocket.
+## Rollback
 
-Never port-forward the raw port to the public internet. Use a strong, unique
-password — this is a shell, not a blog admin.
+`previous-release` contains the release path captured by the cutover commands.
+Validate it is an installed release before atomically restoring it.
 
-## Configuration reference
+```sh
+RUNTIME="$HOME/.gajae-app"
+PREVIOUS="$(<"$RUNTIME/previous-release")"
 
-| Env / flag | Default | Meaning |
-|---|---|---|
-| `HOST` / `--host` | `127.0.0.1` | Bind address. `0.0.0.0` exposes on all interfaces |
-| `SERVER_PORT` / `--port` | `3001` | Listen port |
-| `DATABASE_PATH` / `--database-path` | `~/.cloudcli/auth.db` | Auth/settings SQLite |
-| `ALLOW_REMOTE_SETUP` | unset | `1` = allow first-run setup on a non-loopback bind (trusted networks only) |
-| `JWT_SECRET` | auto-generated per install | Override only if you know why |
+case "$PREVIOUS" in
+  "$RUNTIME"/releases/*) ;;
+  *) printf '%s\n' "Refusing an unsafe rollback target: $PREVIOUS" >&2; exit 1 ;;
+esac
+test -f "$PREVIOUS/dist-server/server/index.js"
 
-## Relationship to the desktop app
+ln -s "$PREVIOUS" "$RUNTIME/current.rollback"
+mv -Tf "$RUNTIME/current.rollback" "$RUNTIME/current"
+systemctl --user restart gajae-app.service
+systemctl --user --no-pager --full status gajae-app.service
+curl --fail http://127.0.0.1:3001/health
+```
 
-The desktop app is a wrapper around this same server: point it at a self-hosted
-instance via *Settings → Remote server URL*. Self-hosting first and attaching
-clients (browser or desktop) to it is the recommended deployment shape.
+Record the failed version and the rollback result in the deployment record.
+Do not remove either release until the rollback health check succeeds.
+
+## Removal boundary
+
+To remove the service and release payload while preserving user data:
+
+```sh
+systemctl --user disable --now gajae-app.service
+rm -f "$HOME/.config/systemd/user/gajae-app.service"
+systemctl --user daemon-reload
+rm -rf "$HOME/.gajae-app/releases"
+rm -f "$HOME/.gajae-app/current" "$HOME/.gajae-app/previous-release"
+```
+
+This intentionally leaves `~/.gajae-app/data` and
+`~/.local/share/gajae-app` untouched. Back up or remove either path only
+through an explicit, separately reviewed data-retention decision.
+
+## Source and upstream boundaries
+
+The checkout at `~/.local/share/gajae-app` is for source review and deliberate
+maintenance work. It is never the service working directory and is never
+updated as part of a release cutover. Follow [UPSTREAM.md](UPSTREAM.md) for
+manual, selective upstream intake; automated mirroring or synchronization is
+not permitted.

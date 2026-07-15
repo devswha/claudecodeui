@@ -1,4 +1,4 @@
-# gjc live provider — 구현 청사진 (omj, 2026-07-09, 체크포인트1 통과 후)
+# gjc live provider — 구현 청사진 (Gajae App, 2026-07-09, 체크포인트1 통과 후)
 
 read-only에 이어 **live**(새 채팅 → gjc headless spawn + 스트리밍 + abort). 원형 = **opencode-cli.js**(CLI spawn 계열).
 
@@ -38,21 +38,21 @@ read-only에 이어 **live**(새 채팅 → gjc headless spawn + 스트리밍 + 
 - `export function abortGjcSession(sessionId)`: `activeGjcProcesses.get(sessionId)?.kill('SIGTERM')` + Map 삭제 (opencode abortOpenCodeSession 미러).
 - `isGjcSessionActive`/`getActiveGjcSessions` (opencode 미러).
 
-### `server/routes/agent.js` (배선 — omj가 edit)
+### `server/routes/agent.js` (배선)
 - provider 검증 배열 2곳에 `'gjc'` 추가(`['claude','cursor','codex','opencode','gjc']`).
 - provider 분기(≈L989 opencode 뒤)에 `else if (provider === 'gjc') { await spawnGjc(message.trim(), { projectPath, cwd, sessionId, model: model || undefined, effort, permissionMode:'bypassPermissions', sessionDir: process.env.GJC_LIVE_SESSION_DIR || undefined }, writer); }`.
   - `GJC_LIVE_SESSION_DIR` env로 검증 시 스크래치 세션 디렉토리 주입(실 홈 세션 무변경). 미설정이면 gjc-cli.js 기본 스크래치.
 
-### `server/index.js` (배선 — omj가 edit)
+### `server/index.js` (배선)
 - import `{ spawnGjc, abortGjcSession, isGjcSessionActive, getActiveGjcSessions }`.
 - `abortFns` Record에 `gjc: abortGjcSession` 추가.
 
-### capabilities (omj가 edit)
+### capabilities
 - `server/modules/providers/services/provider-capabilities.service.ts` gjc: `supportsAbort: true` (live abort 지원). 나머지 read-only 유지(supportsImages는 gjc 이미지 미지원 시 false).
 
-## 검증 (omj)
+## 검증
 - 별도 포트 dev(SERVER_PORT=3099) + `GJC_LIVE_SESSION_DIR=/tmp/gjc-live-scratch`(실 홈 세션 무변경) + client(별도 포트).
 - 새 대화(provider gjc) → gjc 응답이 채팅 UI에 스트림 표시 → **스크린샷/gif**.
 - abort 버튼 → 진행 중 세션 중단 확인.
 - 기존 4 provider + read-only 테스트 무회귀.
-- 프로덕션 cloudcli(:3021) 무접촉. 업스트림 PR 금지.
+- 프로덕션 인스턴스 무접촉. 업스트림 PR 금지.

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
-# 가재코드 앱 배포 스크립트 (하코 상시개선 레인, 2026-07-12)
+# Gajae App deployment script (continuous-improvement lane, 2026-07-12)
 # ---------------------------------------------------------------------------
 # 실배포:
-#   build → (실패: 중단, 서비스 무접촉) → systemctl --user restart cloudcli
+#   build → (failure: stop, leave service untouched) → systemctl --user restart gajae-app
 #         → 3021 헬스체크(재시도) → 정상: last-good 기록 / 실패: 직전 last-good로
 #           자동 롤백(격리 워크트리 재빌드 → dist 교체 → 재시작 → 재헬스체크)
 #
@@ -18,11 +18,11 @@
 set -euo pipefail
 
 REPO_DIR="${DEPLOY_REPO_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
-SERVICE="${DEPLOY_SERVICE:-cloudcli.service}"
+SERVICE="${DEPLOY_SERVICE:-gajae-app.service}"
 HEALTH_URL="${DEPLOY_HEALTH_URL:-http://127.0.0.1:3021/}"
 HEALTH_TIMEOUT="${DEPLOY_HEALTH_TIMEOUT:-60}"
 HEALTH_INTERVAL="${DEPLOY_HEALTH_INTERVAL:-2}"
-STATE_DIR="${DEPLOY_STATE_DIR:-$REPO_DIR/.deploy}"
+STATE_DIR="${DEPLOY_STATE_DIR:-$HOME/.gajae-app/deploy}"
 LAST_GOOD_FILE="$STATE_DIR/last-good-commit"
 DRILL_PORT="${DEPLOY_DRILL_PORT:-3099}"
 
