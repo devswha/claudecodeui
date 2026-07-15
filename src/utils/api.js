@@ -8,6 +8,14 @@
 export const isValidRefreshedToken = (token) =>
   typeof token === 'string' &&
   /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(token);
+const AUTH_BOOTSTRAP_TIMEOUT_MS = 10_000;
+
+const withBootstrapTimeout = (request) => {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), AUTH_BOOTSTRAP_TIMEOUT_MS);
+
+  return request(controller.signal).finally(() => clearTimeout(timeout));
+};
 
 // Utility function for authenticated API calls
 export const authenticatedFetch = (url, options = {}) => {
@@ -43,7 +51,7 @@ export const authenticatedFetch = (url, options = {}) => {
 export const api = {
   // Auth endpoints (no token required)
   auth: {
-    status: () => fetch('/api/auth/status'),
+    status: () => withBootstrapTimeout((signal) => fetch('/api/auth/status', { signal })),
     login: (username, password) => fetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -54,7 +62,7 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password }),
     }),
-    user: () => authenticatedFetch('/api/auth/user'),
+    user: () => withBootstrapTimeout((signal) => authenticatedFetch('/api/auth/user', { signal })),
     logout: () => authenticatedFetch('/api/auth/logout', { method: 'POST' }),
   },
 
