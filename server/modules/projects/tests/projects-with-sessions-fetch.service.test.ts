@@ -6,29 +6,38 @@ import { getArchivedProjectsWithSessions, getProjectsWithSessions } from '@/modu
 
 type Stubs = {
   getProjectPaths: typeof projectsDb.getProjectPaths;
-  getSessionsByProjectPathPage: typeof sessionsDb.getSessionsByProjectPathPage;
-  countSessionsByProjectPath: typeof sessionsDb.countSessionsByProjectPath;
+  getInitialSessionPagesByProject: typeof sessionsDb.getInitialSessionPagesByProject;
 };
 
 function withStubs(total: number, run: (captured: { limit?: number }) => Promise<void>): Promise<void> {
   const original: Stubs = {
     getProjectPaths: projectsDb.getProjectPaths,
-    getSessionsByProjectPathPage: sessionsDb.getSessionsByProjectPathPage,
-    countSessionsByProjectPath: sessionsDb.countSessionsByProjectPath,
+    getInitialSessionPagesByProject: sessionsDb.getInitialSessionPagesByProject,
   };
   const captured: { limit?: number } = {};
   // custom_project_name is set so getProjectsWithSessions skips filesystem displayName derivation.
   (projectsDb as unknown as { getProjectPaths: () => unknown }).getProjectPaths = () => [
     { project_id: 'p1', project_path: '/ws/p1', custom_project_name: 'p1', isStarred: 0 },
   ];
-  (sessionsDb as unknown as { getSessionsByProjectPathPage: (p: string, l: number, o: number) => unknown[] })
-    .getSessionsByProjectPathPage = (_p, limit) => { captured.limit = limit; return []; };
-  (sessionsDb as unknown as { countSessionsByProjectPath: () => number }).countSessionsByProjectPath = () => total;
+  (sessionsDb as unknown as { getInitialSessionPagesByProject: (limit: number) => unknown[] })
+    .getInitialSessionPagesByProject = (limit) => {
+      captured.limit = limit;
+      return total > 0
+        ? [{
+            session_id: 's1',
+            provider: 'gjc',
+            project_path: '/ws/p1',
+            custom_name: null,
+            created_at: '2026-01-01T00:00:00.000Z',
+            updated_at: '2026-01-01T00:00:00.000Z',
+            total,
+          }]
+        : [];
+    };
 
   return run(captured).finally(() => {
     projectsDb.getProjectPaths = original.getProjectPaths;
-    sessionsDb.getSessionsByProjectPathPage = original.getSessionsByProjectPathPage;
-    sessionsDb.countSessionsByProjectPath = original.countSessionsByProjectPath;
+    sessionsDb.getInitialSessionPagesByProject = original.getInitialSessionPagesByProject;
   });
 }
 

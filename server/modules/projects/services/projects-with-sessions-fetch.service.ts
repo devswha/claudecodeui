@@ -22,6 +22,10 @@ type SessionRepositoryRow = {
   updated_at?: string | null;
   created_at?: string | null;
 };
+type InitialProjectSessionRow = SessionRepositoryRow & {
+  project_path: string | null;
+  total: number;
+};
 
 export type ProjectListItem = {
   projectId: string;
@@ -206,6 +210,27 @@ export async function getProjectsWithSessions(
   }>;
   const totalProjects = projectRows.length;
   const projects: ProjectListItem[] = [];
+  const initialSessionsLimit = Math.min(
+    Math.max(1, options.sessionsLimit ?? INITIAL_PROJECT_SESSIONS_PAGE_SIZE),
+    MAX_PROJECT_SESSIONS_PAGE_SIZE,
+  );
+  const initialSessionRows =
+    sessionsDb.getInitialSessionPagesByProject(initialSessionsLimit) as InitialProjectSessionRow[];
+  const initialSessionsByProject = new Map<string, ProjectSessionsPageResult>();
+
+  for (const sessionRow of initialSessionRows) {
+    if (!sessionRow.project_path) {
+      continue;
+    }
+
+    const page = initialSessionsByProject.get(sessionRow.project_path) ?? {
+      sessions: [],
+      total: sessionRow.total,
+      hasMore: sessionRow.total > initialSessionsLimit,
+    };
+    page.sessions.push(mapSessionRowToSummary(sessionRow));
+    initialSessionsByProject.set(sessionRow.project_path, page);
+  }
   let processedProjects = 0;
 
   for (const row of projectRows) {
@@ -224,12 +249,20 @@ export async function getProjectsWithSessions(
     const displayName =
       row.custom_project_name && row.custom_project_name.trim().length > 0
         ? row.custom_project_name
-        : await generateDisplayName(path.basename(projectPath) || projectPath, projectPath);
+        : options.skipSynchronization
+          ? path.basename(projectPath) || projectPath
+          : await generateDisplayName(path.basename(projectPath) || projectPath, projectPath);
 
-    const sessionsPage = readProjectSessionsPageByPath(projectPath, {
-      limit: options.sessionsLimit ?? INITIAL_PROJECT_SESSIONS_PAGE_SIZE,
-      offset: options.sessionsOffset,
-    });
+    const sessionsPage = options.sessionsOffset && options.sessionsOffset > 0
+      ? readProjectSessionsPageByPath(projectPath, {
+          limit: initialSessionsLimit,
+          offset: options.sessionsOffset,
+        })
+      : initialSessionsByProject.get(projectPath) ?? {
+          sessions: [],
+          total: 0,
+          hasMore: false,
+        };
 
     projects.push({
       projectId,

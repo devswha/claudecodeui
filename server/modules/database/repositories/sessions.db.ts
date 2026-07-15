@@ -13,6 +13,9 @@ type SessionRow = {
   created_at: string;
   updated_at: string;
 };
+export type ProjectSessionPageRow = SessionRow & {
+  total: number;
+};
 
 const SESSION_ROW_COLUMNS =
   'session_id, provider, provider_session_id, project_path, jsonl_path, custom_name, isArchived, created_at, updated_at';
@@ -393,6 +396,32 @@ export const sessionsDb = {
       .all(normalizedProjectPath, limit, offset) as SessionRow[];
 
     return normalizeSessionRows(rows);
+  },
+  getInitialSessionPagesByProject(limit: number): ProjectSessionPageRow[] {
+    const db = getConnection();
+    const rows = db
+      .prepare(
+        `WITH ranked_sessions AS (
+           SELECT ${SESSION_ROW_COLUMNS},
+                  COUNT(*) OVER (PARTITION BY project_path) AS total,
+                  ROW_NUMBER() OVER (
+                    PARTITION BY project_path
+                    ORDER BY datetime(COALESCE(updated_at, created_at)) DESC, session_id DESC
+                  ) AS row_number
+           FROM sessions
+           WHERE isArchived = 0
+         )
+         SELECT ${SESSION_ROW_COLUMNS}, total
+         FROM ranked_sessions
+         WHERE row_number <= ?
+         ORDER BY project_path, row_number`
+      )
+      .all(limit) as ProjectSessionPageRow[];
+
+    return rows.map((row) => ({
+      ...normalizeSessionRow(row),
+      total: Number(row.total),
+    })) as ProjectSessionPageRow[];
   },
 
   countSessionsByProjectPath(projectPath: string): number {
