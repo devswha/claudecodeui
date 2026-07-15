@@ -41,7 +41,6 @@ const LEGACY_COORDINATE = ['siteboon', 'claudecodeui'].join('/');
 const STALE_FORK_COORDINATE = ['devswha', 'claudecodeui'].join('/');
 const UPSTREAM_NAME = `Cloud${'CLI'} UI`;
 const UPSTREAM_URL = `https://github.com/${LEGACY_COORDINATE}`;
-const MAIN_README_LABEL = 'Claude Code UI';
 const UPSTREAM_LINEAGE = [
   '<!-- upstream-lineage:start -->',
   `Upstream lineage: Gajae App is derived from [${UPSTREAM_NAME}](${UPSTREAM_URL}). Required attribution and license terms are preserved in [LICENSE](LICENSE) and [NOTICE](NOTICE).`,
@@ -156,12 +155,7 @@ function validateProtectedFile(relativePath, buffer) {
 }
 
 function validateMainReadme(text) {
-  const labelRanges = exactRanges(text, MAIN_README_LABEL);
-  const upstreamUrlRanges = exactRanges(text, UPSTREAM_URL);
-
-  validateExactCount('README.md', 'provenance label', labelRanges, 1);
-  validateExactCount('README.md', 'upstream URL', upstreamUrlRanges, 1);
-  scanText('README.md', text, upstreamUrlRanges);
+  scanText('README.md', text);
 }
 
 function validateLocalizedReadme(relativePath, text) {
