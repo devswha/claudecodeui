@@ -17,7 +17,7 @@ import { parseIncomingJsonObject } from '@/shared/utils.js';
  * Trust boundary for client-supplied image attachments: chat.send options come
  * straight from the browser, and the provider runtimes read the referenced
  * files off disk (Claude base64-encodes them into the prompt). Only images
- * that live directly inside the global upload store (`~/.cloudcli/assets`,
+ * that live directly inside the global upload store (`~/.gajae-app/assets`,
  * where POST /api/assets/images puts them) are allowed through — anything
  * else (absolute paths elsewhere, traversal, subdirectories) is dropped.
  *
@@ -54,14 +54,16 @@ type ProviderSpawnFn = (
   options: AnyRecord,
   writer: unknown
 ) => Promise<unknown>;
+type ProviderSpawnResult = Promise<unknown> & {
+  abortHandle?: string;
+};
 
 type ChatWebSocketDependencies = {
   /** Provider runtimes keyed by provider id. */
   spawnFns: Record<LLMProvider, ProviderSpawnFn>;
   /**
-   * Abort functions keyed by provider id. They are addressed with the
-   * provider-native session id (that is how runtimes key their process maps).
-   * The Claude abort is async; the rest are sync — both shapes are accepted.
+   * Abort functions are normally addressed with a provider-native session id.
+   * A fresh gjc run uses its in-memory abort handle until that id arrives.
    */
   abortFns: Record<LLMProvider, (providerSessionId: string) => boolean | Promise<boolean>>;
   resolveToolApproval: (
@@ -205,7 +207,14 @@ async function handleChatSend(
   };
 
   try {
-    await spawnFn(command, runtimeOptions, run.writer);
+    const providerRun = spawnFn(command, runtimeOptions, run.writer);
+    if (provider === 'gjc') {
+      const abortHandle = (providerRun as ProviderSpawnResult).abortHandle;
+      if (abortHandle) {
+        run.writer.setAbortHandle(abortHandle);
+      }
+    }
+    await providerRun;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`[Chat] Provider runtime "${provider}" failed`, { sessionId, error: message });
@@ -242,9 +251,14 @@ async function handleChatAbort(
   }
 
   const abortFn = dependencies.abortFns[run.provider];
+  const abortSessionId = run.providerSessionId ?? run.writer.getAbortHandle();
   let success = false;
-  if (abortFn && run.providerSessionId) {
-    success = Boolean(await abortFn(run.providerSessionId));
+  if (abortFn && abortSessionId) {
+    success = Boolean(await abortFn(abortSessionId));
+  }
+  if (!success && run.provider === 'gjc') {
+    sendProtocolError(ws, 'ABORT_FAILED', `Session "${sessionId}" could not be aborted.`, sessionId);
+    return;
   }
 
   chatRunRegistry.completeRun(sessionId, {

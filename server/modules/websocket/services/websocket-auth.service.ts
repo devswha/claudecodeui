@@ -3,7 +3,6 @@ import type { VerifyClientCallbackSync } from 'ws';
 import type { AuthenticatedWebSocketRequest } from '@/shared/types.js';
 
 type WebSocketAuthDependencies = {
-  isPlatform: boolean;
   authenticateWebSocket: (token: string | null) => {
     id?: string | number;
     userId?: string | number;
@@ -28,20 +27,7 @@ export function verifyWebSocketClient(
 
   console.log('WebSocket connection attempt to:', `${loggedUrl.pathname}${loggedUrl.search}`);
 
-  // Platform mode: use the first DB user and skip token checks.
-  if (dependencies.isPlatform) {
-    const user = dependencies.authenticateWebSocket(null);
-    if (!user) {
-      console.log('[WARN] Platform mode: No user found in database');
-      return false;
-    }
-
-    request.user = user;
-    console.log('[OK] Platform mode WebSocket authenticated for user:', user.username);
-    return true;
-  }
-
-  // OSS mode: read JWT from query string first, then Authorization header.
+  // Read JWT from query string first, then Authorization header.
   const token =
     upgradeUrl.searchParams.get('token') ??
     request.headers.authorization?.split(' ')[1] ??

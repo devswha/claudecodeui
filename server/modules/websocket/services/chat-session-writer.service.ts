@@ -60,6 +60,11 @@ export class ChatSessionWriter {
    * anyway, but the runtime-visible value must stay provider-native.
    */
   private providerSessionId: string | null;
+  /**
+   * A provider runtime may expose a transient abort handle before it has a
+   * provider-native session id. It stays in memory only and is never persisted.
+   */
+  private abortHandle: string | null = null;
 
   constructor(options: ChatSessionWriterOptions) {
     this.options = options;
@@ -126,6 +131,14 @@ export class ChatSessionWriter {
 
   getSessionId(): string | null {
     return this.providerSessionId;
+  }
+
+  setAbortHandle(abortHandle: string): void {
+    this.abortHandle = abortHandle;
+  }
+
+  getAbortHandle(): string | null {
+    return this.abortHandle;
   }
 
   private captureProviderSessionId(providerSessionId: string): void {

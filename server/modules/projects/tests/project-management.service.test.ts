@@ -62,7 +62,19 @@ test('createProject throws conflict when active project path already exists', as
       assert.ok(error instanceof AppError);
       assert.equal(error.code, 'PROJECT_ALREADY_EXISTS');
       assert.equal(error.statusCode, 409);
-      assert.equal(error.details, 'Project path already exists: /workspace/my-project');
+      assert.deepEqual(error.details, {
+        project: {
+          projectId: 'project-1',
+          path: '/workspace/my-project',
+          fullPath: '/workspace/my-project',
+          displayName: 'my-project',
+          customName: 'my-project',
+          isArchived: false,
+          isStarred: false,
+          sessions: [],
+          sessionMeta: { hasMore: false, total: 0 },
+        },
+      });
       return true;
     },
   );

@@ -331,7 +331,9 @@ const removeSessionFromProject = (project: Project, sessionIdToDelete: string): 
   return updatedProject;
 };
 
-const VALID_TABS: Set<string> = new Set(['chat', 'files', 'shell', 'git', 'tasks', 'browser']);
+// 'shell'/'git'/'files' were removed as tabs (Files is a side panel now);
+// persisted selections fall back to 'chat' via isValidTab.
+const VALID_TABS: Set<string> = new Set(['chat', 'tasks', 'browser']);
 
 const isValidTab = (tab: string): tab is AppTab => {
   return VALID_TABS.has(tab) || tab.startsWith('plugin:');
@@ -360,6 +362,20 @@ export function useProjectsState({
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [selectedSession, setSelectedSession] = useState<ProjectSession | null>(null);
   const [attentionSessionIds, setAttentionSessionIds] = useState<Set<string>>(new Set());
+  const [liveSessionIds, setLiveSessionIds] = useState<Set<string>>(new Set());
+  const [liveSessionNames, setLiveSessionNames] = useState<Map<string, string>>(new Map());
+  const [liveSessionModels, setLiveSessionModels] = useState<Map<string, string>>(new Map());
+  // Session ids whose tmux name is a LINEAGE claim (gjc runs inside that tmux
+  // session). Only these may carry tmux actions (kill/relay) — cwd-fallback
+  // labels killed an unrelated claude tmux session (patina 실사고).
+  const [liveSessionLineage, setLiveSessionLineage] = useState<Set<string>>(new Set());
+  // Foreground-command classification per live id ('interactive' | 'batch'):
+  // a batch gjc descendant under a shell is badged apart from an interactive
+  // gjc TUI. Presentational only — never gates tmux actions.
+  const [liveSessionKinds, setLiveSessionKinds] = useState<Map<string, string>>(new Map());
+  // `$N` tmux generation token per session id — sent with kill/relay so the
+  // server can refuse a same-named session recreated after this snapshot.
+  const [liveSessionTmuxIds, setLiveSessionTmuxIds] = useState<Map<string, string>>(new Map());
   const [activeTab, setActiveTab] = useState<AppTab>(readPersistedTab);
 
   useEffect(() => {
@@ -369,6 +385,98 @@ export function useProjectsState({
       // Silently ignore storage errors
     }
   }, [activeTab]);
+
+  // Poll which sessions are live in a tmux gjc pane (server tmux+lsof endpoint).
+  // Best-effort: on any error / no tmux the set is empty and the UI shows nothing live.
+  //
+  // Two race guards (리뷰 반영):
+  // - generation counter: a delayed older response must never overwrite a newer
+  //   snapshot (stale ownership/action state resurrection).
+  // - removal debounce: a session leaves the live set only after TWO consecutive
+  //   snapshots without it. One transient lsof/tmux hiccup returning an empty/
+  //   partial list must not flip an externally driven session writable.
+  useEffect(() => {
+    let cancelled = false;
+    let generation = 0;
+    let applied = 0;
+    let prevRows = new Map<string, { tmuxName: string | null; tmuxId: string | null; model: string | null; lineage: boolean; kind: string | null }>();
+    let missedOnce = new Set<string>();
+    const poll = async () => {
+      const myGeneration = ++generation;
+      try {
+        const response = await api.liveSessions();
+        if (!response.ok) return;
+        const body = await response.json();
+        const liveSessions: Array<{ id: string; tmuxName?: string | null; tmuxId?: string | null; model?: string | null; claim?: string | null; kind?: string | null }> =
+          body?.data?.liveSessions ?? body?.liveSessions ?? [];
+        if (cancelled || myGeneration <= applied) {
+          return; // a newer response already landed
+        }
+        applied = myGeneration;
+
+        const rows = new Map<string, { tmuxName: string | null; tmuxId: string | null; model: string | null; lineage: boolean; kind: string | null }>();
+        for (const session of liveSessions) {
+          rows.set(session.id, {
+            tmuxName: session.tmuxName ?? null,
+            tmuxId: session.tmuxId ?? null,
+            model: session.model ?? null,
+            lineage: session.claim === 'lineage',
+            kind: session.kind ?? null,
+          });
+        }
+        // Removal debounce: keep a previously seen row for one missing snapshot.
+        const nextMissed = new Set<string>();
+        for (const [id, row] of prevRows) {
+          if (!rows.has(id)) {
+            if (!missedOnce.has(id)) {
+              nextMissed.add(id);
+              rows.set(id, row); // grace period — still treated as live
+            }
+          }
+        }
+        missedOnce = nextMissed;
+        prevRows = rows;
+
+        const names = new Map<string, string>();
+        const tmuxIds = new Map<string, string>();
+        const models = new Map<string, string>();
+        const lineage = new Set<string>();
+        const kinds = new Map<string, string>();
+        for (const [id, row] of rows) {
+          if (row.tmuxName) {
+            names.set(id, row.tmuxName);
+          }
+          if (row.tmuxId) {
+            tmuxIds.set(id, row.tmuxId);
+          }
+          if (row.model) {
+            models.set(id, row.model);
+          }
+          if (row.lineage) {
+            lineage.add(id);
+          }
+          if (row.kind) {
+            kinds.set(id, row.kind);
+          }
+        }
+        setLiveSessionIds(new Set(rows.keys()));
+        setLiveSessionNames(names);
+        setLiveSessionTmuxIds(tmuxIds);
+        setLiveSessionModels(models);
+        setLiveSessionLineage(lineage);
+        setLiveSessionKinds(kinds);
+      } catch {
+        // ignore — live detection is best-effort; last snapshot stays (fail-closed
+        // for read-only protection).
+      }
+    };
+    void poll();
+    const timer = setInterval(poll, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, []);
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isLoadingProjects, setIsLoadingProjects] = useState(true);
@@ -817,6 +925,13 @@ export function useProjectsState({
       return;
     }
 
+    // Synthetic idle fleet rows (`idle-gjc:<tmux>`) are not sessions: no
+    // transcript, no provider — a placeholder here would become a writable
+    // fake session once the idle row disappears (리뷰 반영). Never route them.
+    if (sessionId.startsWith('idle-gjc:')) {
+      return;
+    }
+
     // Only the currently selected project may host the placeholder. Guessing
     // another project (e.g. "first one with sessions") could bind the URL
     // session to the wrong project — better to wait until the owning project
@@ -848,6 +963,8 @@ export function useProjectsState({
 
   const handleSessionSelect = useCallback(
     (session: ProjectSession) => {
+      // Live sessions open read-only (composer hidden in the chat view), so opening
+      // one can't cause driver duplication — no confirmation needed.
       clearSessionAttention(session.id);
       setSelectedSession(session);
 
@@ -1023,6 +1140,11 @@ export function useProjectsState({
       selectedSession,
       activeSessions,
       attentionSessionIds,
+      liveSessionIds,
+      liveSessionNames,
+      liveSessionLineage,
+      liveSessionTmuxIds,
+      liveSessionKinds,
       onProjectSelect: handleProjectSelect,
       onSessionSelect: handleSessionSelect,
       onNewSession: handleNewSession,
@@ -1040,6 +1162,11 @@ export function useProjectsState({
     }),
     [
       attentionSessionIds,
+      liveSessionIds,
+      liveSessionNames,
+      liveSessionLineage,
+      liveSessionTmuxIds,
+      liveSessionKinds,
       handleNewSession,
       handleProjectDelete,
       handleProjectSelect,
@@ -1063,6 +1190,7 @@ export function useProjectsState({
     projects,
     selectedProject,
     selectedSession,
+    liveSessionModels,
     activeTab,
     sidebarOpen,
     isLoadingProjects,

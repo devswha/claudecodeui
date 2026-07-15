@@ -22,6 +22,10 @@ type SessionRepositoryRow = {
   updated_at?: string | null;
   created_at?: string | null;
 };
+type InitialProjectSessionRow = SessionRepositoryRow & {
+  project_path: string | null;
+  total: number;
+};
 
 export type ProjectListItem = {
   projectId: string;
@@ -75,6 +79,11 @@ export type ProjectSessionsPageApiView = {
 
 const DEFAULT_PROJECT_SESSIONS_PAGE_SIZE = 20;
 const MAX_PROJECT_SESSIONS_PAGE_SIZE = 200;
+// Eager per-project session slice for the project LIST endpoint. Kept small so the
+// initial /api/projects payload stays bounded even when a few heavy projects hold
+// many sessions (real gjc data: top projects hold 80/60/49… sessions). The frontend
+// lazy-loads the rest per project via getProjectSessionsPage + sessionMeta.hasMore.
+const INITIAL_PROJECT_SESSIONS_PAGE_SIZE = 5;
 
 /**
  * Generate better display name from path.
@@ -127,13 +136,22 @@ function mapSessionRowToSummary(row: SessionRepositoryRow): SessionSummary {
   };
 }
 
-function readProjectSessionsIncludingArchived(projectPath: string): ProjectSessionsPageResult {
-  const rows = sessionsDb.getSessionsByProjectPathIncludingArchived(projectPath) as SessionRepositoryRow[];
+function readProjectSessionsIncludingArchived(
+  projectPath: string,
+  options: SessionPaginationOptions = {},
+): ProjectSessionsPageResult {
+  const pagination = normalizeSessionPagination(options);
+  const rows = sessionsDb.getSessionsByProjectPathIncludingArchivedPage(
+    projectPath,
+    pagination.limit,
+    pagination.offset,
+  ) as SessionRepositoryRow[];
+  const total = sessionsDb.countSessionsByProjectPathIncludingArchived(projectPath);
 
   return {
     sessions: rows.map(mapSessionRowToSummary),
-    total: rows.length,
-    hasMore: false,
+    total,
+    hasMore: pagination.offset + rows.length < total,
   };
 }
 
@@ -192,6 +210,27 @@ export async function getProjectsWithSessions(
   }>;
   const totalProjects = projectRows.length;
   const projects: ProjectListItem[] = [];
+  const initialSessionsLimit = Math.min(
+    Math.max(1, options.sessionsLimit ?? INITIAL_PROJECT_SESSIONS_PAGE_SIZE),
+    MAX_PROJECT_SESSIONS_PAGE_SIZE,
+  );
+  const initialSessionRows =
+    sessionsDb.getInitialSessionPagesByProject(initialSessionsLimit) as InitialProjectSessionRow[];
+  const initialSessionsByProject = new Map<string, ProjectSessionsPageResult>();
+
+  for (const sessionRow of initialSessionRows) {
+    if (!sessionRow.project_path) {
+      continue;
+    }
+
+    const page = initialSessionsByProject.get(sessionRow.project_path) ?? {
+      sessions: [],
+      total: sessionRow.total,
+      hasMore: sessionRow.total > initialSessionsLimit,
+    };
+    page.sessions.push(mapSessionRowToSummary(sessionRow));
+    initialSessionsByProject.set(sessionRow.project_path, page);
+  }
   let processedProjects = 0;
 
   for (const row of projectRows) {
@@ -210,12 +249,20 @@ export async function getProjectsWithSessions(
     const displayName =
       row.custom_project_name && row.custom_project_name.trim().length > 0
         ? row.custom_project_name
-        : await generateDisplayName(path.basename(projectPath) || projectPath, projectPath);
+        : options.skipSynchronization
+          ? path.basename(projectPath) || projectPath
+          : await generateDisplayName(path.basename(projectPath) || projectPath, projectPath);
 
-    const sessionsPage = readProjectSessionsPageByPath(projectPath, {
-      limit: options.sessionsLimit,
-      offset: options.sessionsOffset,
-    });
+    const sessionsPage = options.sessionsOffset && options.sessionsOffset > 0
+      ? readProjectSessionsPageByPath(projectPath, {
+          limit: initialSessionsLimit,
+          offset: options.sessionsOffset,
+        })
+      : initialSessionsByProject.get(projectPath) ?? {
+          sessions: [],
+          total: 0,
+          hasMore: false,
+        };
 
     projects.push({
       projectId,
@@ -241,12 +288,13 @@ export async function getProjectsWithSessions(
 }
 
 /**
- * Reads archived projects from DB and includes every session row for each
- * project path, because an archived workspace should surface all preserved
- * conversation history in the archive view regardless of each session's flag.
+ * Reads archived projects from DB. Each project's preserved history (active +
+ * archived sessions) is returned as a bounded page; the full history stays
+ * reachable via `sessionsLimit`/`sessionsOffset` (sessionMeta.hasMore/total),
+ * so the archive view is not a single unbounded payload.
  */
 export async function getArchivedProjectsWithSessions(
-  options: Pick<GetProjectsWithSessionsOptions, 'skipSynchronization'> = {},
+  options: Pick<GetProjectsWithSessionsOptions, 'skipSynchronization' | 'sessionsLimit' | 'sessionsOffset'> = {},
 ): Promise<ArchivedProjectListItem[]> {
   if (!options.skipSynchronization) {
     await sessionSynchronizerService.synchronizeSessions();
@@ -267,7 +315,10 @@ export async function getArchivedProjectsWithSessions(
         ? row.custom_project_name
         : await generateDisplayName(path.basename(row.project_path) || row.project_path, row.project_path);
 
-    const sessionsPage = readProjectSessionsIncludingArchived(row.project_path);
+    const sessionsPage = readProjectSessionsIncludingArchived(row.project_path, {
+      limit: options.sessionsLimit,
+      offset: options.sessionsOffset,
+    });
 
     archivedProjects.push({
       projectId: row.project_id,

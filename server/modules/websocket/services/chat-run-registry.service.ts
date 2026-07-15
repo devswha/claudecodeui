@@ -177,7 +177,7 @@ function recordProviderSessionId(run: ChatRun, providerSessionId: string): void 
   run.providerSessionId = providerSessionId;
 
   try {
-    sessionsDb.assignProviderSessionId(run.appSessionId, providerSessionId);
+    sessionsDb.assignProviderSessionId(run.appSessionId, run.provider, providerSessionId);
     void broadcastCanonicalSessionUpsert(run.appSessionId).catch((error) => {
       const message = error instanceof Error ? error.message : String(error);
       console.error('[ChatRunRegistry] Failed to broadcast canonical session mapping', {

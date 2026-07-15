@@ -2,9 +2,9 @@
  * Database connection management.
  *
  * Owns the single SQLite connection used across all repositories.
- * Handles path resolution, directory creation, legacy database migration,
- * and eager app_config bootstrap so the auth middleware can read the
- * JWT secret before the full schema is applied.
+ * Handles path resolution, directory creation, and eager app_config bootstrap
+ * so the auth middleware can read the JWT secret before the full schema is
+ * applied.
  *
  * Consumers should never create their own Database instance — they use
  * `getConnection()` to obtain the shared singleton.
@@ -12,42 +12,29 @@
 
 import Database from 'better-sqlite3';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
-import { fileURLToPath } from 'url';
 
 import { APP_CONFIG_TABLE_SCHEMA_SQL } from '@/modules/database/schema.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 // ---------------------------------------------------------------------------
 // Path resolution
 // ---------------------------------------------------------------------------
 
 /**
- * Resolves the database file path from environment or falls back
- * to the legacy location inside the server/database/ folder.
+ * Resolves the database file path from DATABASE_PATH or the canonical
+ * user-level location when no override is configured.
  *
  * Priority:
- *   1. DATABASE_PATH environment variable (set by cli.js or load-env-vars.js)
- *   2. Legacy path: server/database/auth.db
+ *   1. DATABASE_PATH environment variable (set by cli.js or load-env.js)
+ *   2. ~/.gajae-app/auth.db
  */
 function resolveDatabasePath(): string {
-    // process.env.DATABASE_PATH is set by load-env-vars.js to either the .env value or a default(~/.cloudcli/auth.db) in the user's home directory. 
-    return process.env.DATABASE_PATH || resolveLegacyDatabasePath();
+  return process.env.DATABASE_PATH || path.join(os.homedir(), '.gajae-app', 'auth.db');
 }
-
-/**
- * Resolves the legacy database path (always inside server/database/).
- * Used for the one-time migration to the new external location.
- */
-function resolveLegacyDatabasePath(): string {
-  const serverDir = path.resolve(__dirname, '..', '..', '..');
-  return path.join(serverDir, 'database', 'auth.db');
-}
-
 // ---------------------------------------------------------------------------
-// Directory & migration helpers
+// Directory helpers
 // ---------------------------------------------------------------------------
 
 function ensureDatabaseDirectory(dbPath: string): void {
@@ -57,36 +44,6 @@ function ensureDatabaseDirectory(dbPath: string): void {
     console.log('Created database directory:', dir);
   }
 }
-
-/**
- * If the database was moved to an external location (e.g. ~/.cloudcli/)
- * but the user still has a legacy auth.db inside the install directory,
- * copy it to the new location as a one-time migration.
- */
-function migrateLegacyDatabase(targetPath: string): void {
-  const legacyPath = resolveLegacyDatabasePath();
-
-  if (targetPath === legacyPath) return;
-  if (fs.existsSync(targetPath)) return;
-  if (!fs.existsSync(legacyPath)) return;
-
-  try {
-    fs.copyFileSync(legacyPath, targetPath);
-    console.log('Migrated legacy database', { from: legacyPath, to: targetPath });
-
-
-    // copy the write-ahead log and shared memory files (auth.db-wal, auth.db-shm) if they exist, to preserve any uncommitted transactions
-    for (const suffix of ['-wal', '-shm']) {
-      const src = legacyPath + suffix;
-      if (fs.existsSync(src)) {
-        fs.copyFileSync(src, targetPath + suffix);
-      }
-    }
-  } catch (err: any) {
-    console.error('Could not migrate legacy database', { error: err.message });
-  }
-}
-
 
 // ---------------------------------------------------------------------------
 // Singleton connection
@@ -100,10 +57,9 @@ let instance: Database.Database | null = null;
  * The first invocation:
  *   1. Resolves the target database path
  *   2. Ensures the parent directory exists
- *   3. Migrates from the legacy install-directory path if needed
- *   4. Opens the SQLite connection
- *   5. Eagerly creates the app_config table (auth reads JWT secret at import time)
- *   6. Logs the database location
+ *   3. Opens the SQLite connection
+ *   4. Eagerly creates the app_config table (auth reads JWT secret at import time)
+ *   5. Logs the database location
  */
 export function getConnection(): Database.Database {
   if (instance) return instance;
@@ -111,7 +67,6 @@ export function getConnection(): Database.Database {
   const dbPath = resolveDatabasePath();
 
   ensureDatabaseDirectory(dbPath);
-  migrateLegacyDatabase(dbPath);
 
   instance = new Database(dbPath);
 

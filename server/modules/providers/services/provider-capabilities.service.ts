@@ -75,6 +75,16 @@ const PROVIDER_CAPABILITIES: Record<LLMProvider, ProviderCapabilities> = {
     supportsTokenUsage: true,
     supportsEffort: true,
   },
+  gjc: {
+    provider: 'gjc',
+    permissionModes: ['default'],
+    defaultPermissionMode: 'default',
+    supportsImages: false,
+    supportsAbort: true,
+    supportsPermissionRequests: false,
+    supportsTokenUsage: false,
+    supportsEffort: false,
+  },
 };
 
 /**

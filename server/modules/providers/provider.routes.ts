@@ -7,6 +7,11 @@ import { providerModelsService } from '@/modules/providers/services/provider-mod
 import { providerSkillsService } from '@/modules/providers/services/skills.service.js';
 import { sessionConversationsSearchService } from '@/modules/providers/services/session-conversations-search.service.js';
 import { sessionsService } from '@/modules/providers/services/sessions.service.js';
+import { getLiveGjcSessions, IDLE_GJC_ID_PREFIX } from '@/modules/providers/services/live-sessions.service.js';
+import { getExternalCliSessions } from '@/modules/providers/services/external-cli-sessions.service.js';
+import { getHomeDir, getHomeDirSuggestions } from '@/modules/providers/services/home-dirs.service.js';
+import { isValidTmuxName, sendToLiveSession, isValidSpawnName, spawnLiveSession, killLiveSession } from '@/modules/providers/services/live-send.service.js';
+import { listLiveGjcCommands } from '@/modules/providers/services/live-commands.service.js';
 import type {
   LLMProvider,
   McpScope,
@@ -286,6 +291,7 @@ const parseProvider = (value: unknown): LLMProvider => {
     || normalized === 'codex'
     || normalized === 'cursor'
     || normalized === 'opencode'
+    || normalized === 'gjc'
   ) {
     return normalized;
   }
@@ -553,6 +559,159 @@ router.get(
   asyncHandler(async (_req: Request, res: Response) => {
     const sessions = sessionsService.listArchivedSessions();
     res.json(createApiSuccessResponse({ sessions }));
+  }),
+);
+
+router.get(
+  '/sessions/live',
+  asyncHandler(async (_req: Request, res: Response) => {
+    // Sessions live in a tmux gjc pane, each with its tmux session name (tmux+lsof;
+    // empty if no tmux). gjc panes with no transcript yet (first message pending)
+    // appear as synthetic `idle-gjc:<tmux name>` rows. liveSessionIds kept for
+    // backward compatibility.
+    const liveSessions = await getLiveGjcSessions();
+    res.json(createApiSuccessResponse({
+      liveSessions,
+      // Legacy consumers treat these as transcript-backed session ids — keep
+      // synthetic idle-gjc rows out of this surface.
+      liveSessionIds: liveSessions
+        .filter((session) => !session.id.startsWith(IDLE_GJC_ID_PREFIX))
+        .map((session) => session.id),
+    }));
+  }),
+);
+
+router.get(
+  '/sessions/external',
+  asyncHandler(async (_req: Request, res: Response) => {
+    // External CLI (claude/codex) tmux sessions for the Termius-style terminal
+    // lane. A tmux session is excluded only when a gjc process actually runs
+    // INSIDE one of its panes (service-level subtree check). We deliberately do
+    // NOT subtract tmux names the gjc live lane claimed via its cwd fallback:
+    // a background gjc merely sharing the cwd (실측: patina — pane runs claude,
+    // a detached gjc from days ago shares the directory) must not hide the
+    // pane's real claude/codex session from this lane. Such a name may then
+    // legitimately appear in BOTH tabs — a gjc conversation row and an
+    // attachable terminal row are different, both-true views.
+    const externalSessions = await getExternalCliSessions();
+    res.json(createApiSuccessResponse({ externalSessions }));
+  }),
+);
+
+router.get(
+  '/fs/dir-suggestions',
+  asyncHandler(async (req: Request, res: Response) => {
+    // Home-relative directory autocomplete (spawn form cwd + files panel root).
+    // Read-only readdir under $HOME, traversal-guarded in the service.
+    const prefix = typeof req.query.prefix === 'string' ? req.query.prefix : '';
+    const suggestions = await getHomeDirSuggestions(prefix);
+    res.json(createApiSuccessResponse({ home: getHomeDir(), suggestions }));
+  }),
+);
+
+/**
+ * Server-side lineage gate for tmux-destructive/injective actions (kill, send).
+ * The client hides these controls for non-lineage rows, but a stale UI snapshot
+ * or a direct authenticated request could still target a tmux session that no
+ * gjc provably runs inside (실사고: patina — cwd-label row killed an unrelated
+ * claude tmux). Fail-closed: transient lsof misses deny the action; retrying
+ * once detection recovers is the intended UX for a destructive operation.
+ *
+ * `tmuxId` (`$N`, tmux server-unique) is the GENERATION token: when the client
+ * sends the id it observed, a same-named session recreated after that snapshot
+ * fails the match and the action is refused (이름 재사용 race 차단). The tower
+ * still acts by name, so a residual window of one detection→proxy hop remains —
+ * documented, and closable only by a tower-side id-addressed API.
+ */
+const TMUX_ID_RE = /^\$\d+$/;
+
+async function assertLineageTmuxTarget(tmuxName: string, tmuxId: string | null): Promise<void> {
+  const live = await getLiveGjcSessions();
+  const matches = live.filter((session) => session.tmuxName === tmuxName && session.claim === 'lineage');
+  if (matches.length === 0) {
+    throw new AppError('tmux 세션에 대한 조작이 거부되었습니다 — gjc가 그 세션 안에서 실행 중임이 확인될 때만 허용됩니다.', {
+      code: 'TMUX_ACTION_NOT_LINEAGE',
+      statusCode: 403,
+    });
+  }
+  if (tmuxId !== null && !matches.some((session) => session.tmuxId === tmuxId)) {
+    throw new AppError('tmux 세션이 그 사이 교체되었습니다 — 같은 이름의 다른 세션입니다. 목록을 새로고침한 뒤 다시 시도하세요.', {
+      code: 'TMUX_GENERATION_MISMATCH',
+      statusCode: 409,
+    });
+  }
+}
+
+/** Optional `$N` generation token from the request body; malformed values are rejected. */
+function readTmuxIdParam(value: unknown): string | null {
+  if (value === undefined || value === null || value === '') {
+    return null;
+  }
+  if (typeof value === 'string' && TMUX_ID_RE.test(value)) {
+    return value;
+  }
+  throw new AppError('tmuxId must look like "$<number>".', { code: 'INVALID_TMUX_ID', statusCode: 400 });
+}
+
+router.post(
+  '/sessions/live/send',
+  asyncHandler(async (req: Request, res: Response) => {
+    // Relay a message into a live tmux gjc session via the control tower's /send.
+    const body = (req.body ?? {}) as { tmuxName?: unknown; tmuxId?: unknown; message?: unknown };
+    if (!isValidTmuxName(body.tmuxName)) {
+      throw new AppError('A valid tmuxName is required.', { code: 'INVALID_TMUX_NAME', statusCode: 400 });
+    }
+    const message = typeof body.message === 'string' ? body.message : '';
+    if (!message.trim()) {
+      throw new AppError('message is required.', { code: 'EMPTY_MESSAGE', statusCode: 400 });
+    }
+    await assertLineageTmuxTarget(body.tmuxName, readTmuxIdParam(body.tmuxId));
+    const result = await sendToLiveSession(body.tmuxName, message);
+    res.json(createApiSuccessResponse(result));
+  }),
+);
+
+router.post(
+  '/sessions/live/spawn',
+  asyncHandler(async (req: Request, res: Response) => {
+    // Spawn a new tmux gjc session via the control tower's /spawn (name + cwd).
+    const body = (req.body ?? {}) as { name?: unknown; cwd?: unknown };
+    if (!isValidSpawnName(body.name)) {
+      throw new AppError('A valid session name is required (alphanumeric, not "company").', { code: 'INVALID_SPAWN_NAME', statusCode: 400 });
+    }
+    const cwd = typeof body.cwd === 'string' ? body.cwd.trim() : '';
+    if (!cwd) {
+      throw new AppError('cwd is required.', { code: 'EMPTY_CWD', statusCode: 400 });
+    }
+    const result = await spawnLiveSession(body.name, cwd);
+    res.json(createApiSuccessResponse(result));
+  }),
+);
+
+router.post(
+  '/sessions/live/kill',
+  asyncHandler(async (req: Request, res: Response) => {
+    // Kill a live tmux session via the control tower's /kill. The tower is the
+    // fleet-lifecycle authority (protected sessions → 403, unknown → 422).
+    const body = (req.body ?? {}) as { tmuxName?: unknown; tmuxId?: unknown };
+    if (!isValidTmuxName(body.tmuxName)) {
+      throw new AppError('A valid tmuxName is required.', { code: 'INVALID_TMUX_NAME', statusCode: 400 });
+    }
+    await assertLineageTmuxTarget(body.tmuxName, readTmuxIdParam(body.tmuxId));
+    const result = await killLiveSession(body.tmuxName);
+    res.json(createApiSuccessResponse(result));
+  }),
+);
+
+router.get(
+  '/sessions/live/commands',
+  asyncHandler(async (req: Request, res: Response) => {
+    // Slash commands a live tmux gjc session can execute — native
+    // (`~/.gjc/agent/commands`), project (`<workspace>/.gjc/commands`), and
+    // installed skills. Read-only; powers the live relay composer's palette.
+    const workspacePath = readOptionalQueryString(req.query.workspacePath);
+    const commands = await listLiveGjcCommands(workspacePath);
+    res.json(createApiSuccessResponse({ commands }));
   }),
 );
 

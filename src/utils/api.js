@@ -1,5 +1,3 @@
-import { IS_PLATFORM } from "../constants/config";
-
 // Only accept a refreshed token that has this app's issued JWT shape
 // (three base64url segments). An attacker-injected/malformed header value
 // must never overwrite the stored auth token.
@@ -10,6 +8,14 @@ import { IS_PLATFORM } from "../constants/config";
 export const isValidRefreshedToken = (token) =>
   typeof token === 'string' &&
   /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(token);
+const AUTH_BOOTSTRAP_TIMEOUT_MS = 10_000;
+
+const withBootstrapTimeout = (request) => {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), AUTH_BOOTSTRAP_TIMEOUT_MS);
+
+  return request(controller.signal).finally(() => clearTimeout(timeout));
+};
 
 // Utility function for authenticated API calls
 export const authenticatedFetch = (url, options = {}) => {
@@ -22,7 +28,7 @@ export const authenticatedFetch = (url, options = {}) => {
     defaultHeaders['Content-Type'] = 'application/json';
   }
 
-  if (!IS_PLATFORM && token) {
+  if (token) {
     defaultHeaders['Authorization'] = `Bearer ${token}`;
   }
 
@@ -45,7 +51,7 @@ export const authenticatedFetch = (url, options = {}) => {
 export const api = {
   // Auth endpoints (no token required)
   auth: {
-    status: () => fetch('/api/auth/status'),
+    status: () => withBootstrapTimeout((signal) => fetch('/api/auth/status', { signal })),
     login: (username, password) => fetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -56,7 +62,7 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password }),
     }),
-    user: () => authenticatedFetch('/api/auth/user'),
+    user: () => withBootstrapTimeout((signal) => authenticatedFetch('/api/auth/user', { signal })),
     logout: () => authenticatedFetch('/api/auth/logout', { method: 'POST' }),
   },
 
@@ -64,8 +70,56 @@ export const api = {
   // config endpoint removed - no longer needed (frontend uses window.location)
   // After the projectName → projectId migration the path/query identifier is
   // the DB-assigned `projectId`; parameter names reflect that for clarity.
-  projects: () => authenticatedFetch('/api/projects'),
+  projects: () => authenticatedFetch('/api/projects?skipSynchronization=1'),
   archivedProjects: () => authenticatedFetch('/api/projects/archived'),
+  // Session ids currently live in a tmux gjc pane (tmux+lsof; [] when no tmux).
+  liveSessions: () => authenticatedFetch('/api/providers/sessions/live'),
+  // Relay a message into a live tmux gjc session via the control tower (POST /send).
+  // `tmuxId` ($N generation token) makes the server refuse a same-named session
+  // that replaced the one this client saw.
+  /**
+   * @param {string} tmuxName
+   * @param {string} message
+   * @param {string | null} [tmuxId]
+   */
+  liveSessionSend: (tmuxName, message, tmuxId = null) =>
+    authenticatedFetch('/api/providers/sessions/live/send', {
+      method: 'POST',
+      body: JSON.stringify(tmuxId ? { tmuxName, tmuxId, message } : { tmuxName, message }),
+    }),
+  // Spawn a new tmux gjc session via the control tower (POST /spawn).
+  liveSessionSpawn: (name, cwd) =>
+    authenticatedFetch('/api/providers/sessions/live/spawn', {
+      method: 'POST',
+      body: JSON.stringify({ name, cwd }),
+    }),
+  // Kill a live tmux session via the control tower (POST /kill). The tower is
+  // the fleet-lifecycle authority — protected sessions are refused there.
+  /**
+   * @param {string} tmuxName
+   * @param {string | null} [tmuxId]
+   */
+  liveSessionKill: (tmuxName, tmuxId = null) =>
+    authenticatedFetch('/api/providers/sessions/live/kill', {
+      method: 'POST',
+      body: JSON.stringify(tmuxId ? { tmuxName, tmuxId } : { tmuxName }),
+    }),
+  // Slash commands a live tmux gjc session can execute (native + project +
+  // skills) — powers the live relay composer's command palette.
+  /**
+   * @param {string} [workspacePath]
+   */
+  liveSessionCommands: (workspacePath) => {
+    const params = new URLSearchParams();
+    if (workspacePath) params.set('workspacePath', workspacePath);
+    const qs = params.toString();
+    return authenticatedFetch(`/api/providers/sessions/live/commands${qs ? `?${qs}` : ''}`);
+  },
+  // External CLI (claude/codex) tmux sessions for the terminal-attach lane.
+  externalSessions: () => authenticatedFetch('/api/providers/sessions/external'),
+  // Home-relative directory autocomplete ({ home, suggestions }).
+  dirSuggestions: (prefix) =>
+    authenticatedFetch(`/api/providers/fs/dir-suggestions?prefix=${encodeURIComponent(prefix)}`),
   projectSessions: (projectId, { limit = 20, offset = 0 } = {}) => {
     const params = new URLSearchParams();
     params.set('limit', String(limit));

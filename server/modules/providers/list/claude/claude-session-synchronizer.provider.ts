@@ -135,7 +135,7 @@ export class ClaudeSessionSynchronizer implements IProviderSessionSynchronizer {
 
     // App-created sessions are keyed by an app id, so disk-discovered provider
     // ids must be resolved through the provider-id mapping first.
-    const existingSession = sessionsDb.getSessionByProviderSessionId(parsed.sessionId)
+    const existingSession = sessionsDb.getSessionByProviderSessionId(this.provider, parsed.sessionId)
       ?? sessionsDb.getSessionById(parsed.sessionId);
     const existingSessionName = existingSession?.custom_name;
     if (existingSessionName && existingSessionName !== 'Untitled Claude Session') {

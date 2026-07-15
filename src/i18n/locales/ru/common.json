@@ -86,7 +86,7 @@
     "openInEditor": "Открыть в редакторе"
   },
   "mainContent": {
-    "loading": "Загрузка CloudCLI",
+    "loading": "Загрузка 가재코드",
     "settingUpWorkspace": "Настройка рабочего пространства...",
     "chooseProject": "Выберите проект",
     "selectProjectDescription": "Выберите проект на боковой панели, чтобы начать работу с Claude. Каждый проект содержит ваши сеансы чата и историю файлов.",
@@ -215,9 +215,9 @@
     "whatsNew": "Что нового:",
     "viewFullRelease": "Посмотреть полный релиз",
     "updateProgress": "Прогресс обновления:",
-    "manualUpgrade": "Ручное обновление:",
-    "npmUpgradeCommand": "npm install -g @cloudcli-ai/cloudcli@latest",
-    "manualUpgradeHint": "Или нажмите \"Обновить сейчас\" для автоматического обновления.",
+    "manualUpgrade": "Обновление:",
+    "npmUpgradeCommand": "scripts/gajae-app.sh update",
+    "manualUpgradeHint": "Скачайте последнюю версию из GitHub Releases или выполните эту команду обновления.",
     "updateCompleted": "Обновление успешно завершено!",
     "restartServer": "Пожалуйста, перезапустите сервер для применения изменений.",
     "updateFailed": "Обновление не удалось",

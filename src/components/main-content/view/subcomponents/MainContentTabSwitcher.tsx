@@ -1,4 +1,4 @@
-import { MessageSquare, Terminal, Folder, GitBranch, ClipboardCheck, MonitorPlay, type LucideIcon } from 'lucide-react';
+import { MessageSquare, ClipboardCheck, MonitorPlay, type LucideIcon } from 'lucide-react';
 import type { Dispatch, SetStateAction } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -31,11 +31,14 @@ type PluginTab = {
 
 type TabDefinition = BuiltInTab | PluginTab;
 
+// Shell/Git/Files tabs were removed on purpose (2026-07-11, 하코 지시):
+// app-pty CLI spawning duplicated the 외부 CLI terminal lane (and tied CLIs to
+// the server lifecycle — one died on service restart), the manual Git panel
+// clashes with the agent-driven branch-flow discipline, and Files became the
+// fixed-root right-hand panel (FilesPanel) instead of a tab. Persisted
+// 'shell'/'git'/'files' tabs are reset to 'chat' in MainContent.
 const BASE_TABS: BuiltInTab[] = [
-  { kind: 'builtin', id: 'chat',  labelKey: 'tabs.chat',  icon: MessageSquare },
-  { kind: 'builtin', id: 'shell', labelKey: 'tabs.shell', icon: Terminal },
-  { kind: 'builtin', id: 'files', labelKey: 'tabs.files', icon: Folder },
-  { kind: 'builtin', id: 'git',   labelKey: 'tabs.git',   icon: GitBranch },
+  { kind: 'builtin', id: 'chat', labelKey: 'tabs.chat', icon: MessageSquare },
 ];
 
 const BROWSER_TAB: BuiltInTab = {

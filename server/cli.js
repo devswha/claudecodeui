@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * CloudCLI CLI
+ * Gajae App CLI
  *
- * Provides command-line utilities for managing CloudCLI
+ * Provides command-line utilities for managing Gajae App.
  *
  * Commands:
  *   (no args)     - Start the server (default)
@@ -54,9 +54,9 @@ const c = {
 // Load package.json for version info
 const packageJsonPath = path.join(APP_ROOT, 'package.json');
 const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
-// Match the runtime fallback in load-env.js so "cloudcli status" reports the same default
-// database location that the backend will actually use when no DATABASE_PATH is configured.
-const DEFAULT_DATABASE_PATH = path.join(os.homedir(), '.cloudcli', 'auth.db');
+// Match the default in load-env.js so "gajae-app status" reports the same
+// database location that the backend uses without DATABASE_PATH.
+const DEFAULT_DATABASE_PATH = path.join(os.homedir(), '.gajae-app', 'auth.db');
 
 // Load environment variables from .env file if it exists
 function loadEnvFile() {
@@ -90,7 +90,7 @@ function getInstallDir() {
 
 // Show status command
 function showStatus() {
-    console.log(`\n${c.bright('CloudCLI UI - Status')}\n`);
+    console.log(`\n${c.bright('Gajae App - Status')}\n`);
     console.log(c.dim('═'.repeat(60)));
 
     // Version info
@@ -116,7 +116,7 @@ function showStatus() {
 
     // Environment variables
     console.log(`\n${c.info('[INFO]')} Configuration:`);
-    console.log(`       SERVER_PORT: ${c.bright(process.env.SERVER_PORT || process.env.PORT || '3001')} ${c.dim(process.env.SERVER_PORT || process.env.PORT ? '' : '(default)')}`);
+    console.log(`       SERVER_PORT: ${c.bright(process.env.SERVER_PORT || '3001')} ${c.dim(process.env.SERVER_PORT ? '' : '(default)')}`);
     console.log(`       DATABASE_PATH: ${c.dim(process.env.DATABASE_PATH || '(using default location)')}`);
     console.log(`       CLAUDE_CLI_PATH: ${c.dim(process.env.CLAUDE_CLI_PATH || 'claude (default)')}`);
     console.log(`       CONTEXT_WINDOW: ${c.dim(process.env.CONTEXT_WINDOW || '160000 (default)')}`);
@@ -137,56 +137,57 @@ function showStatus() {
 
     console.log('\n' + c.dim('═'.repeat(60)));
     console.log(`\n${c.tip('[TIP]')} Hints:`);
-    console.log(`      ${c.dim('>')} Use ${c.bright('cloudcli --port 8080')} to run on a custom port`);
-    console.log(`      ${c.dim('>')} Use ${c.bright('cloudcli --database-path /path/to/db')} for custom database`);
-    console.log(`      ${c.dim('>')} Run ${c.bright('cloudcli help')} for all options`);
-    console.log(`      ${c.dim('>')} Access the UI at http://localhost:${process.env.SERVER_PORT || process.env.PORT || '3001'}\n`);
+    console.log(`      ${c.dim('>')} Use ${c.bright('gajae-app --port 8080')} to run on a custom port`);
+    console.log(`      ${c.dim('>')} Use ${c.bright('gajae-app --database-path /path/to/db')} for custom database`);
+    console.log(`      ${c.dim('>')} Run ${c.bright('gajae-app help')} for all options`);
+    console.log(`      ${c.dim('>')} Access the UI at http://localhost:${process.env.SERVER_PORT || '3001'}\n`);
 }
 
 // Show help
 function showHelp() {
     console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║              CloudCLI - Command Line Tool               ║
+║              Gajae App - Command Line Tool                    ║
 ╚═══════════════════════════════════════════════════════════════╝
 
 Usage:
-  claude-code-ui [command] [options]
-  cloudcli [command] [options]
+  gajae-app [command] [options]
 
 Commands:
-  start            Start the CloudCLI server (default)
+  start            Start the Gajae App server (default)
   sandbox          Manage Docker sandbox environments
   browser-use-mcp  Run the Browser MCP stdio server
   status           Show configuration and data locations
-  update           Update to the latest version
   help             Show this help information
   version          Show version information
 
 Options:
   -p, --port <port>           Set server port (default: 3001)
+  --host <host>               Set bind address (default: 127.0.0.1; use 0.0.0.0 to expose)
   --database-path <path>      Set custom database location
   -h, --help                  Show this help information
   -v, --version               Show version information
 
 Examples:
-  $ cloudcli                        # Start with defaults
-  $ cloudcli --port 8080            # Start on port 8080
-  $ cloudcli sandbox ~/my-project   # Run in a Docker sandbox
-  $ cloudcli status                 # Show configuration
+  $ gajae-app                        # Start with defaults
+  $ gajae-app --port 8080            # Start on port 8080
+  $ gajae-app --host 0.0.0.0         # Expose on the network (auth required — see below)
+  $ gajae-app sandbox ~/my-project   # Run in a Docker sandbox
+  $ gajae-app status                 # Show configuration
 
 Environment Variables:
   SERVER_PORT         Set server port (default: 3001)
-  PORT                Set server port (default: 3001) (LEGACY)
+  HOST                Set bind address (default: 127.0.0.1 — loopback only)
   DATABASE_PATH       Set custom database location
   CLAUDE_CLI_PATH     Set custom Claude CLI path
   CONTEXT_WINDOW      Set context window size (default: 160000)
+  ALLOW_REMOTE_SETUP  Set to 1 to allow first-run setup on a non-loopback HOST (trusted networks only)
 
 Documentation:
-  ${packageJson.homepage || 'https://github.com/siteboon/claudecodeui'}
+  ${packageJson.homepage || 'https://github.com/devswha/gajae-app'}
 
 Report Issues:
-  ${packageJson.bugs?.url || 'https://github.com/siteboon/claudecodeui/issues'}
+  ${packageJson.bugs?.url || 'https://github.com/devswha/gajae-app/issues'}
 `);
 }
 
@@ -195,67 +196,12 @@ function showVersion() {
     console.log(`${packageJson.version}`);
 }
 
-// Compare semver versions, returns true if v1 > v2
-function isNewerVersion(v1, v2) {
-    const parts1 = v1.split('.').map(Number);
-    const parts2 = v2.split('.').map(Number);
-    for (let i = 0; i < 3; i++) {
-        if (parts1[i] > parts2[i]) return true;
-        if (parts1[i] < parts2[i]) return false;
-    }
-    return false;
-}
-
-// Check for updates
-async function checkForUpdates(silent = false) {
-    try {
-        const { execSync } = await import('child_process');
-        const latestVersion = execSync('npm show @cloudcli-ai/cloudcli version', { encoding: 'utf8' }).trim();
-        const currentVersion = packageJson.version;
-
-        if (isNewerVersion(latestVersion, currentVersion)) {
-            console.log(`\n${c.warn('[UPDATE]')} New version available: ${c.bright(latestVersion)} (current: ${currentVersion})`);
-            console.log(`         Run ${c.bright('cloudcli update')} to update\n`);
-            return { hasUpdate: true, latestVersion, currentVersion };
-        } else if (!silent) {
-            console.log(`${c.ok('[OK]')} You are on the latest version (${currentVersion})`);
-        }
-        return { hasUpdate: false, latestVersion, currentVersion };
-    } catch (e) {
-        if (!silent) {
-            console.log(`${c.warn('[WARN]')} Could not check for updates`);
-        }
-        return { hasUpdate: false, error: e.message };
-    }
-}
-
-// Update the package
-async function updatePackage() {
-    try {
-        const { execSync } = await import('child_process');
-        console.log(`${c.info('[INFO]')} Checking for updates...`);
-
-        const { hasUpdate, latestVersion, currentVersion } = await checkForUpdates(true);
-
-        if (!hasUpdate) {
-            console.log(`${c.ok('[OK]')} Already on the latest version (${currentVersion})`);
-            return;
-        }
-
-        console.log(`${c.info('[INFO]')} Updating from ${currentVersion} to ${latestVersion}...`);
-        execSync('npm update -g @cloudcli-ai/cloudcli', { stdio: 'inherit' });
-        console.log(`${c.ok('[OK]')} Update complete! Restart cloudcli to use the new version.`);
-    } catch (e) {
-        console.error(`${c.error('[ERROR]')} Update failed: ${e.message}`);
-        console.log(`${c.tip('[TIP]')} Try running manually: npm update -g @cloudcli-ai/cloudcli`);
-    }
-}
 
 // ── Sandbox command ─────────────────────────────────────────
 
 const SANDBOX_TEMPLATES = {
-    claude: 'docker.io/cloudcliai/sandbox:claude-code',
-    codex: 'docker.io/cloudcliai/sandbox:codex',
+    claude: 'gajae-app-sandbox:claude-code',
+    codex: 'gajae-app-sandbox:codex',
 };
 
 const SANDBOX_SECRETS = {
@@ -320,11 +266,11 @@ function parseSandboxArgs(args) {
 
 function showSandboxHelp() {
     console.log(`
-${c.bright('CloudCLI Sandbox')} — Run CloudCLI inside Docker Sandboxes
+${c.bright('Gajae App Sandbox')} — Run Gajae App inside Docker Sandboxes
 
 Usage:
-  cloudcli sandbox <workspace>            Create and start a sandbox
-  cloudcli sandbox <subcommand> [name]    Manage sandboxes
+  gajae-app sandbox <workspace>            Create and start a sandbox
+  gajae-app sandbox <subcommand> [name]    Manage sandboxes
 
 Subcommands:
   ${c.bright('(default)')}    Create a sandbox and start the web UI
@@ -332,7 +278,7 @@ Subcommands:
   ${c.bright('start')}        Restart a stopped sandbox and re-launch the web UI
   ${c.bright('stop')}         Stop a sandbox (preserves state)
   ${c.bright('rm')}           Remove a sandbox
-  ${c.bright('logs')}         Show CloudCLI server logs
+  ${c.bright('logs')}         Show Gajae App server logs
   ${c.bright('help')}         Show this help
 
 Options:
@@ -343,13 +289,13 @@ Options:
       --port <port>         Host port for the web UI (default: 3001)
 
 Examples:
-  $ cloudcli sandbox ~/my-project
-  $ cloudcli sandbox ~/my-project --agent codex --port 8080
-  $ cloudcli sandbox ~/my-project --env SERVER_PORT=8080 --env HOST=0.0.0.0
-  $ cloudcli sandbox ls
-  $ cloudcli sandbox stop my-project
-  $ cloudcli sandbox start my-project
-  $ cloudcli sandbox rm my-project
+  $ gajae-app sandbox ~/my-project
+  $ gajae-app sandbox ~/my-project --agent codex --port 8080
+  $ gajae-app sandbox ~/my-project --env SERVER_PORT=8080 --env HOST=0.0.0.0
+  $ gajae-app sandbox ls
+  $ gajae-app sandbox stop my-project
+  $ gajae-app sandbox start my-project
+  $ gajae-app sandbox rm my-project
 
 Prerequisites:
   1. Install sbx CLI: https://docs.docker.com/ai/sandboxes/get-started/
@@ -362,8 +308,8 @@ Advanced usage:
   For branch mode, multiple workspaces, memory limits, network policies,
   or passing prompts to the agent, use sbx directly with the template:
 
-    sbx run --template docker.io/cloudcliai/sandbox:claude-code claude ~/my-project --branch my-feature
-    sbx run --template docker.io/cloudcliai/sandbox:claude-code claude ~/project ~/libs:ro --memory 8g
+    sbx run --template gajae-app-sandbox:claude-code claude ~/my-project --branch my-feature
+    sbx run --template gajae-app-sandbox:claude-code claude ~/project ~/libs:ro --memory 8g
 
   Full Docker Sandboxes docs: https://docs.docker.com/ai/sandboxes/usage/
 `);
@@ -414,7 +360,7 @@ async function sandboxCommand(args) {
 
         case 'stop':
             if (!opts.name) {
-                console.error(`\n${c.error('❌')} Sandbox name required: cloudcli sandbox stop <name>\n`);
+                console.error(`\n${c.error('❌')} Sandbox name required: gajae-app sandbox stop <name>\n`);
                 process.exit(1);
             }
             sbx(['stop', opts.name], { inherit: true });
@@ -422,7 +368,7 @@ async function sandboxCommand(args) {
 
         case 'rm':
             if (!opts.name) {
-                console.error(`\n${c.error('❌')} Sandbox name required: cloudcli sandbox rm <name>\n`);
+                console.error(`\n${c.error('❌')} Sandbox name required: gajae-app sandbox rm <name>\n`);
                 process.exit(1);
             }
             sbx(['rm', opts.name], { inherit: true });
@@ -430,11 +376,11 @@ async function sandboxCommand(args) {
 
         case 'logs':
             if (!opts.name) {
-                console.error(`\n${c.error('❌')} Sandbox name required: cloudcli sandbox logs <name>\n`);
+                console.error(`\n${c.error('❌')} Sandbox name required: gajae-app sandbox logs <name>\n`);
                 process.exit(1);
             }
             try {
-                sbx(['exec', opts.name, 'bash', '-c', 'cat /tmp/cloudcli-ui.log'], { inherit: true });
+                sbx(['exec', opts.name, 'bash', '-c', 'cat /tmp/gajae-app-ui.log'], { inherit: true });
             } catch (e) {
                 console.error(`\n${c.error('❌')} Could not read logs: ${e.message || 'Is the sandbox running?'}\n`);
             }
@@ -442,7 +388,7 @@ async function sandboxCommand(args) {
 
         case 'start': {
             if (!opts.name) {
-                console.error(`\n${c.error('❌')} Sandbox name required: cloudcli sandbox start <name>\n`);
+                console.error(`\n${c.error('❌')} Sandbox name required: gajae-app sandbox start <name>\n`);
                 process.exit(1);
             }
             console.log(`\n${c.info('▶')} Starting sandbox ${c.bright(opts.name)}...`);
@@ -453,8 +399,8 @@ async function sandboxCommand(args) {
             restartRun.unref();
             await new Promise(resolve => setTimeout(resolve, 5000));
 
-            console.log(`${c.info('▶')} Launching CloudCLI web server...`);
-            sbx(['exec', opts.name, 'bash', '-c', 'nohup cloudcli start --port 3001 > /tmp/cloudcli-ui.log 2>&1 & disown']);
+            console.log(`${c.info('▶')} Launching Gajae App web server...`);
+            sbx(['exec', opts.name, 'bash', '-c', 'nohup gajae-app start --port 3001 > /tmp/gajae-app-ui.log 2>&1 & disown']);
 
             console.log(`${c.info('▶')} Forwarding port ${opts.port} → 3001...`);
             try {
@@ -476,15 +422,15 @@ async function sandboxCommand(args) {
                 }
             }
 
-            console.log(`\n${c.ok('✔')} ${c.bright('CloudCLI is ready!')}`);
+            console.log(`\n${c.ok('✔')} ${c.bright('Gajae App is ready!')}`);
             console.log(`  ${c.info('→')} ${c.bright(`http://localhost:${opts.port}`)}\n`);
             break;
         }
 
         case 'create': {
             if (!opts.workspace) {
-                console.error(`\n${c.error('❌')} Workspace path required: cloudcli sandbox <path>\n`);
-                console.log(`   Example: ${c.bright('cloudcli sandbox ~/my-project')}\n`);
+                console.error(`\n${c.error('❌')} Workspace path required: gajae-app sandbox <path>\n`);
+                console.log(`   Example: ${c.bright('gajae-app sandbox ~/my-project')}\n`);
                 process.exit(1);
             }
 
@@ -509,7 +455,7 @@ async function sandboxCommand(args) {
                 }
             } catch { /* sbx secret ls not available, skip check */ }
 
-            console.log(`\n${c.bright('CloudCLI Sandbox')}`);
+            console.log(`\n${c.bright('Gajae App Sandbox')}`);
             console.log(c.dim('─'.repeat(50)));
             console.log(`  Agent:     ${c.info(opts.agent)} ${c.dim(`(${secret} credentials)`)}`);
             console.log(`  Workspace: ${c.dim(workspace)}`);
@@ -551,9 +497,9 @@ async function sandboxCommand(args) {
                 }
             }
 
-            // Step 3: Start CloudCLI inside the sandbox
-            console.log(`${c.info('▶')} Launching CloudCLI web server...`);
-            sbx(['exec', opts.name, 'bash', '-c', 'nohup cloudcli start --port 3001 > /tmp/cloudcli-ui.log 2>&1 & disown']);
+            // Step 3: Start Gajae App inside the sandbox
+            console.log(`${c.info('▶')} Launching Gajae App web server...`);
+            sbx(['exec', opts.name, 'bash', '-c', 'nohup gajae-app start --port 3001 > /tmp/gajae-app-ui.log 2>&1 & disown']);
 
             // Step 4: Forward port
             console.log(`${c.info('▶')} Forwarding port ${opts.port} → 3001...`);
@@ -577,14 +523,14 @@ async function sandboxCommand(args) {
             }
 
             // Done
-            console.log(`\n${c.ok('✔')} ${c.bright('CloudCLI is ready!')}`);
+            console.log(`\n${c.ok('✔')} ${c.bright('Gajae App is ready!')}`);
             console.log(`  ${c.info('→')} Open ${c.bright(`http://localhost:${opts.port}`)}`);
             console.log(`\n${c.dim('  Manage with:')}`);
             console.log(`  ${c.dim('$')} sbx ls`);
             console.log(`  ${c.dim('$')} sbx stop ${opts.name}`);
             console.log(`  ${c.dim('$')} sbx start ${opts.name}`);
             console.log(`  ${c.dim('$')} sbx rm ${opts.name}`);
-            console.log(`\n${c.dim('  Or install globally:')} npm install -g @cloudcli-ai/cloudcli\n`);
+            console.log(`\n${c.dim('  Run this sandbox with:')} gajae-app sandbox start ${opts.name}\n`);
             break;
         }
 
@@ -597,10 +543,6 @@ async function sandboxCommand(args) {
 
 // Start the server
 async function startServer() {
-    // Check for updates silently on startup
-    checkForUpdates(true);
-
-    // Import and run the server
     await import('./index.js');
 }
 
@@ -619,6 +561,10 @@ function parseArgs(args) {
             parsed.options.serverPort = args[++i];
         } else if (arg.startsWith('--port=')) {
             parsed.options.serverPort = arg.split('=')[1];
+        } else if (arg === '--host') {
+            parsed.options.host = args[++i];
+        } else if (arg.startsWith('--host=')) {
+            parsed.options.host = arg.split('=')[1];
         } else if (arg === '--database-path') {
             parsed.options.databasePath = args[++i];
         } else if (arg.startsWith('--database-path=')) {
@@ -647,11 +593,12 @@ async function main() {
     // Apply CLI options to environment variables
     if (options.serverPort) {
         process.env.SERVER_PORT = options.serverPort;
-    } else if (!process.env.SERVER_PORT && process.env.PORT) {
-        process.env.SERVER_PORT = process.env.PORT;
     }
     if (options.databasePath) {
         process.env.DATABASE_PATH = options.databasePath;
+    }
+    if (options.host) {
+        process.env.HOST = options.host;
     }
 
     switch (command) {
@@ -678,12 +625,9 @@ async function main() {
         case '--version':
             showVersion();
             break;
-        case 'update':
-            await updatePackage();
-            break;
         default:
             console.error(`\n❌ Unknown command: ${command}`);
-            console.log('   Run "cloudcli help" for usage information.\n');
+            console.log('   Run "gajae-app help" for usage information.\n');
             process.exit(1);
     }
 }

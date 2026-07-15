@@ -1,4 +1,4 @@
-import type { LoadingProgress, Project, ProjectSession, LLMProvider } from '../../../types/app';
+import type { ExternalTerminalTarget, LoadingProgress, Project, ProjectSession, LLMProvider } from '../../../types/app';
 import type { SessionActivityMap } from '../../../hooks/useSessionProtection';
 
 export type ProjectSortOrder = 'name' | 'date';
@@ -43,6 +43,16 @@ export type SidebarProps = {
   selectedSession: ProjectSession | null;
   activeSessions: SessionActivityMap;
   attentionSessionIds: ReadonlySet<string>;
+  liveSessionIds: ReadonlySet<string>;
+  liveSessionNames: ReadonlyMap<string, string>;
+  // Ids whose tmux name is a lineage claim — the only rows allowed tmux actions.
+  liveSessionLineage: ReadonlySet<string>;
+  // `$N` tmux generation token per id — passed with kill so a same-named
+  // replacement session is refused server-side.
+  liveSessionTmuxIds: ReadonlyMap<string, string>;
+  // Foreground-command classification per live id ('interactive' | 'batch').
+  // Presentational badge only — never gates tmux actions.
+  liveSessionKinds: ReadonlyMap<string, string>;
   onProjectSelect: (project: Project) => void;
   onSessionSelect: (session: ProjectSession) => void;
   onNewSession: (project: Project) => void;
@@ -59,6 +69,8 @@ export type SidebarProps = {
   settingsInitialTab: string;
   onCloseSettings: () => void;
   isMobile: boolean;
+  // Opens an external CLI (claude/codex) tmux session as a full main-area terminal.
+  onExternalTerminalOpen: (target: ExternalTerminalTarget) => void;
 };
 
 export type SessionViewModel = {

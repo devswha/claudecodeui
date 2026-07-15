@@ -1,18 +1,22 @@
-import { type ReactNode } from 'react';
+import { type ReactNode, useState } from 'react';
 import { Activity, Archive, Folder, MessageSquare, RotateCcw, Search, Trash2 } from 'lucide-react';
 import type { TFunction } from 'i18next';
 
 import { ScrollArea } from '../../../../shared/view/ui';
-import type { Project } from '../../../../types/app';
+import type { ExternalTerminalTarget, Project } from '../../../../types/app';
 import type { ReleaseInfo } from '../../../../types/sharedTypes';
 import type { ConversationSearchResults, SearchProgress } from '../../hooks/useSidebarController';
 import type { ArchivedProjectListItem, ArchivedSessionListItem, SidebarSearchMode } from '../../types/types';
+import { useExternalCliSessions } from '../../hooks/useExternalCliSessions';
 import SessionProviderLogo from '../../../llm-logo-provider/SessionProviderLogo';
 import { getAllSessions } from '../../utils/utils';
 
 import SidebarFooter from './SidebarFooter';
 import SidebarHeader from './SidebarHeader';
 import SidebarProjectList, { type SidebarProjectListProps } from './SidebarProjectList';
+import SidebarLiveSection from './SidebarLiveSection';
+import SidebarExternalSection from './SidebarExternalSection';
+import SidebarSpawnSession from './SidebarSpawnSession';
 
 function HighlightedSnippet({ snippet, highlights }: { snippet: string; highlights: { start: number; end: number }[] }) {
   const parts: ReactNode[] = [];
@@ -148,6 +152,11 @@ type SidebarContentProps = {
   onShowVersionModal: () => void;
   onShowSettings: () => void;
   projectListProps: SidebarProjectListProps;
+  liveSessionNames: ReadonlyMap<string, string>;
+  liveSessionLineage: ReadonlySet<string>;
+  liveSessionTmuxIds: ReadonlyMap<string, string>;
+  liveSessionKinds: ReadonlyMap<string, string>;
+  onExternalTerminalOpen: (target: ExternalTerminalTarget) => void;
   t: TFunction;
 };
 
@@ -186,8 +195,15 @@ export default function SidebarContent({
   onShowVersionModal,
   onShowSettings,
   projectListProps,
+  liveSessionNames,
+  liveSessionLineage,
+  liveSessionTmuxIds,
+  liveSessionKinds,
+  onExternalTerminalOpen,
   t,
 }: SidebarContentProps) {
+  const [topTab, setTopTab] = useState<'live' | 'external' | 'archive'>('live');
+  const externalSessions = useExternalCliSessions();
   const showConversationSearch = searchMode === 'conversations' && searchFilter.trim().length >= 2;
   const hasPartialResults = conversationResults && conversationResults.results.length > 0;
   const groupedArchivedSessions = groupArchivedSessionsByProject(archivedSessions);
@@ -214,9 +230,78 @@ export default function SidebarContent({
         isRefreshing={isRefreshing}
         onCreateProject={onCreateProject}
         onCollapseSidebar={onCollapseSidebar}
+        hideSearchTools={topTab !== 'archive'}
         t={t}
       />
 
+      <div className="flex items-center gap-2 px-2 pt-2 md:px-1.5">
+        {topTab === 'live' ? (
+          <span className="flex items-center gap-1.5 px-1 text-xs font-semibold text-foreground">
+            <span className="inline-flex h-1.5 w-1.5 rounded-full bg-blue-500" aria-hidden />
+            GJC{projectListProps.liveSessionIds.size > 0 ? ` (${projectListProps.liveSessionIds.size})` : ''}
+          </span>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setTopTab('live')}
+            className="rounded-md px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+          >
+            GJC{projectListProps.liveSessionIds.size > 0 ? ` (${projectListProps.liveSessionIds.size})` : ''}
+          </button>
+        )}
+        {topTab === 'external' ? (
+          <span className="flex items-center gap-1.5 px-1 text-xs font-semibold text-foreground">
+            <span className="inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" aria-hidden />
+            외부 CLI{externalSessions.length > 0 ? ` (${externalSessions.length})` : ''}
+          </span>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setTopTab('external')}
+            className="rounded-md px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+          >
+            외부 CLI{externalSessions.length > 0 ? ` (${externalSessions.length})` : ''}
+          </button>
+        )}
+        <span className="flex-1" />
+        {topTab === 'archive' ? (
+          <span className="px-1 text-xs font-semibold text-foreground">기록</span>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setTopTab('archive')}
+            className="rounded-md px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+          >
+            기록
+          </button>
+        )}
+      </div>
+
+      {topTab === 'live' ? (
+        <ScrollArea className="flex-1 overflow-y-auto overscroll-contain md:px-1.5 md:py-2">
+          <SidebarSpawnSession />
+          {projectListProps.liveSessionIds.size === 0 ? (
+            <div className="px-4 py-8 text-center text-sm text-muted-foreground">
+              지금 tmux에서 작동 중인 가재코드(GJC) 세션이 없습니다.
+            </div>
+          ) : (
+            <SidebarLiveSection
+              projects={projects}
+              liveSessionIds={projectListProps.liveSessionIds}
+              selectedSession={projectListProps.selectedSession}
+              onSessionSelect={projectListProps.onSessionSelect}
+              liveSessionNames={liveSessionNames}
+              liveSessionLineage={liveSessionLineage}
+              liveSessionTmuxIds={liveSessionTmuxIds}
+              liveSessionKinds={liveSessionKinds}
+            />
+          )}
+        </ScrollArea>
+      ) : topTab === 'external' ? (
+        <ScrollArea className="flex-1 overflow-y-auto overscroll-contain md:px-1.5 md:py-2">
+          <SidebarExternalSection sessions={externalSessions} projects={projects} onOpen={onExternalTerminalOpen} />
+        </ScrollArea>
+      ) : (
       <ScrollArea className="flex-1 overflow-y-auto overscroll-contain md:px-1.5 md:py-2">
         {showConversationSearch ? (
           isSearching && !hasPartialResults ? (
@@ -552,6 +637,7 @@ export default function SidebarContent({
           <SidebarProjectList {...projectListProps} />
         )}
       </ScrollArea>
+      )}
 
       <SidebarFooter
         updateAvailable={updateAvailable}

@@ -456,6 +456,8 @@ export const runMigrations = (db: Database) => {
 
     db.exec('CREATE INDEX IF NOT EXISTS idx_session_ids_lookup ON sessions(session_id)');
     db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_provider_session_id ON sessions(provider_session_id)');
+    // A unique index is unsafe for existing databases, which may already contain duplicate mappings.
+    db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_provider_provider_session_id ON sessions(provider, provider_session_id)');
     db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_project_path ON sessions(project_path)');
     db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_is_archived ON sessions(isArchived)');
     db.exec('CREATE INDEX IF NOT EXISTS idx_projects_is_starred ON projects(isStarred)');

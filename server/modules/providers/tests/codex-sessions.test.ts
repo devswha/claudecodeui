@@ -73,9 +73,9 @@ test('Codex synchronizer titles app-created sessions from the first user message
     await writeCodexTranscript(tempRoot, 'codex-app-1', workspacePath, 'Fix the login redirect bug');
     await withIsolatedDatabase(async () => {
       // The app allocates its own id and later maps the provider id onto it,
-      // exactly as a message sent from cloudcli does.
+      // exactly as a message sent from Gajae App does.
       sessionsDb.createAppSession('app-1', 'codex', workspacePath);
-      sessionsDb.assignProviderSessionId('app-1', 'codex-app-1');
+      sessionsDb.assignProviderSessionId('app-1', 'codex', 'codex-app-1');
 
       const synchronizer = new CodexSessionSynchronizer();
       await synchronizer.synchronize();

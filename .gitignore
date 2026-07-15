@@ -144,10 +144,13 @@ tasks/
 # Git worktrees
 .worktrees/
 
+# Deploy state (last-good commit marker for scripts/deploy.sh)
+/.deploy/
+
 # Local desktop packaging artifacts
 /.desktop-build/
 /release/
 /electron/server-bundle-config.json
-cloudcli-sidebar-app-source.tar.gz
-cloudcli-sidebar.html
+gajae-app-source.tar.gz
+gajae-app-sidebar.html
 electron/*.tar.gz

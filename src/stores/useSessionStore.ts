@@ -12,6 +12,8 @@ import { useCallback, useMemo, useRef, useState } from 'react';
 import { authenticatedFetch } from '../utils/api';
 import type { LLMProvider } from '../types/app';
 
+import { buildRefreshMessagesUrl } from './sessionMessageFetch';
+
 // ─── NormalizedMessage (mirrors server/adapters/types.js) ────────────────────
 
 export type MessageKind =
@@ -620,7 +622,11 @@ export function useSessionStore() {
     const slot = getSlot(sessionId);
     const fetchTicket = ++slot._fetchSeq;
     try {
-      const url = `/api/providers/sessions/${encodeURIComponent(sessionId)}/messages`;
+      // Bound the reconcile fetch to the currently-loaded window so a large
+      // transcript is not re-pulled in full on every refresh (latest-N + scroll-up
+      // lazy-load stays intact). total/hasMore below keep older messages reachable.
+      const loadedCount = slot.serverMessages.length + slot.realtimeMessages.length;
+      const url = buildRefreshMessagesUrl(sessionId, loadedCount);
       const response = await authenticatedFetch(url);
 
       if (!response.ok) throw new Error(`HTTP ${response.status}`);

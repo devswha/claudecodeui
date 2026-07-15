@@ -5,14 +5,14 @@ import path from 'path';
 import os from 'os';
 import { promises as fs } from 'fs';
 import crypto from 'crypto';
-import { userDb, apiKeysDb, githubTokensDb, projectsDb } from '../modules/database/index.js';
+import { apiKeysDb, githubTokensDb, projectsDb } from '../modules/database/index.js';
 import { queryClaudeSDK } from '../claude-sdk.js';
 import { spawnCursor } from '../cursor-cli.js';
 import { queryCodex } from '../openai-codex.js';
 import { spawnOpenCode } from '../opencode-cli.js';
+import { spawnGjc } from '../gjc-cli.js';
 import { Octokit } from '@octokit/rest';
 import { providerModelsService } from '../modules/providers/services/provider-models.service.js';
-import { IS_PLATFORM } from '../constants/config.js';
 import { normalizeProjectPath } from '../shared/utils.js';
 
 const router = express.Router();
@@ -20,32 +20,9 @@ const router = express.Router();
 /**
  * Middleware to authenticate agent API requests.
  *
- * Supports two authentication modes:
- * 1. Platform mode (IS_PLATFORM=true): For managed/hosted deployments where
- *    authentication is handled by an external proxy. Requests are trusted and
- *    the default user context is used.
- *
- * 2. API key mode (default): For self-hosted deployments where users authenticate
- *    via API keys created in the UI. Keys are validated against the local database.
+ * Validates API keys created in the local database.
  */
 const validateExternalApiKey = (req, res, next) => {
-  // Platform mode: Authentication is handled externally (e.g., by a proxy layer).
-  // Trust the request and use the default user context.
-  if (IS_PLATFORM) {
-    try {
-      const user = userDb.getFirstUser();
-      if (!user) {
-        return res.status(500).json({ error: 'Platform mode: No user found in database' });
-      }
-      req.user = user;
-      return next();
-    } catch (error) {
-      console.error('Platform mode error:', error);
-      return res.status(500).json({ error: 'Platform mode: Failed to fetch user' });
-    }
-  }
-
-  // Self-hosted mode: Validate API key from header or query parameter
   const apiKey = req.headers['x-api-key'] || req.query.apiKey;
 
   if (!apiKey) {
@@ -870,8 +847,8 @@ router.post('/', validateExternalApiKey, async (req, res) => {
     return res.status(400).json({ error: 'message is required' });
   }
 
-  if (!['claude', 'cursor', 'codex', 'opencode'].includes(provider)) {
-    return res.status(400).json({ error: 'provider must be "claude", "cursor", "codex", or "opencode"' });
+  if (!['claude', 'cursor', 'codex', 'opencode', 'gjc'].includes(provider)) {
+    return res.status(400).json({ error: 'provider must be "claude", "cursor", "codex", "opencode", or "gjc"' });
   }
 
   // Validate GitHub branch/PR creation requirements
@@ -996,6 +973,18 @@ router.post('/', validateExternalApiKey, async (req, res) => {
         model: model || opencodeModels.DEFAULT,
         effort,
         permissionMode: 'bypassPermissions' // Agent runs are non-interactive, like the other providers above
+      }, writer);
+    } else if (provider === 'gjc') {
+      console.log('🦞 Starting gjc headless session');
+
+      await spawnGjc(message.trim(), {
+        projectPath: finalProjectPath,
+        cwd: finalProjectPath,
+        sessionId: sessionId || null,
+        model: model || undefined,
+        effort,
+        permissionMode: 'bypassPermissions',
+        sessionDir: process.env.GJC_LIVE_SESSION_DIR || undefined,
       }, writer);
     }
 
@@ -1137,7 +1126,6 @@ router.post('/', validateExternalApiKey, async (req, res) => {
           } else {
             prBody += `Agent task: ${message}`;
           }
-          prBody += '\n\n---\n*This pull request was automatically created by CloudCLI.ai Agent.*';
 
           console.log(`📝 PR Title: ${prTitle}`);
 

@@ -22,7 +22,7 @@ export const useEditorSidebar = ({
   const resizeHandleRef = useRef<HTMLDivElement | null>(null);
 
   const handleFileOpen = useCallback(
-    (filePath: string, diffInfo: CodeEditorDiffInfo | null = null) => {
+    (filePath: string, diffInfo: CodeEditorDiffInfo | null = null, options: { projectId?: string } = {}) => {
       const normalizedPath = filePath.replace(/\\/g, '/');
       const fileName = normalizedPath.split('/').pop() || filePath;
 
@@ -30,8 +30,10 @@ export const useEditorSidebar = ({
         name: fileName,
         path: filePath,
         // DB projectId is forwarded to the editor so it can read/save files
-        // via `/api/projects/:projectId/file` endpoints.
-        projectId: selectedProject?.projectId,
+        // via `/api/projects/:projectId/file` endpoints. Callers opening files
+        // that belong to a DIFFERENT project (e.g. the fixed-root files panel)
+        // pass their own projectId via options.
+        projectId: options.projectId ?? selectedProject?.projectId,
         diffInfo,
       });
     },

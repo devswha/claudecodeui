@@ -1,6 +1,9 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App.tsx'
+// Pretendard (self-hosted, dynamic-subset) — Korean/Latin sans with real Hangul
+// glyphs, so Korean no longer falls back to a serif (궁서체). Loaded before app CSS.
+import 'pretendard/dist/web/variable/pretendardvariable-dynamic-subset.css'
 import './index.css'
 import 'katex/dist/katex.min.css'
 

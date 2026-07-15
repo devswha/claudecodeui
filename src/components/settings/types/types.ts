@@ -35,6 +35,8 @@ export type NotificationPreferencesState = {
   events: {
     actionRequired: boolean;
     stop: boolean;
+    // tmux 라이브(외부 구동) gjc 세션 턴 완료 — 웹 구동 stop과 별도 토글.
+    liveStop: boolean;
     error: boolean;
   };
 };

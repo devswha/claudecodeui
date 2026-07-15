@@ -1,25 +1,26 @@
-# Contributing to CloudCLI UI
+# Contributing to Gajae App
 
-Thanks for your interest in contributing to CloudCLI UI! Before you start, please take a moment to read through this guide.
+Thanks for your interest in contributing to Gajae App! Before you start, please take a moment to read through this guide.
 
 ## Before You Start
 
-- **Search first.** Check [existing issues](https://github.com/siteboon/claudecodeui/issues) and [pull requests](https://github.com/siteboon/claudecodeui/pulls) to avoid duplicating work.
-- **Discuss first** for new features. Open an [issue](https://github.com/siteboon/claudecodeui/issues/new) to discuss your idea before investing time in implementation. We may already have plans or opinions on how it should work.
+- **Search first.** Check [existing issues](https://github.com/devswha/gajae-app/issues) and [pull requests](https://github.com/devswha/gajae-app/pulls) to avoid duplicating work.
+- **Discuss first** for new features. Open an [issue](https://github.com/devswha/gajae-app/issues/new) to discuss your idea before investing time in implementation. We may already have plans or opinions on how it should work.
 - **Bug fixes are always welcome.** If you spot a bug, feel free to open a PR directly.
 
 ## Prerequisites
 
 - [Node.js](https://nodejs.org/) 22 or later
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and configured
+- Git
 
 ## Getting Started
 
-1. Fork the repository
+1. Fork the [repository](https://github.com/devswha/gajae-app).
 2. Clone your fork:
    ```bash
-   git clone https://github.com/<your-username>/claudecodeui.git
-   cd claudecodeui
+   git clone https://github.com/<your-username>/gajae-app.git
+   cd gajae-app
    ```
 3. Install dependencies:
    ```bash
@@ -37,7 +38,7 @@ Thanks for your interest in contributing to CloudCLI UI! Before you start, pleas
 ## Project Structure
 
 ```
-claudecodeui/
+gajae-app/
 ├── src/              # React frontend (Vite + Tailwind)
 │   ├── components/   # UI components
 │   ├── contexts/     # React context providers
@@ -48,7 +49,7 @@ claudecodeui/
 │   └── utils/        # Frontend utilities
 ├── server/           # Express backend
 │   ├── routes/       # API route handlers
-│   ├── middleware/    # Express middleware
+│   ├── middleware/   # Express middleware
 │   ├── database/     # SQLite database layer
 │   └── tools/        # CLI tool integrations
 ├── shared/           # Code shared between client and server
@@ -79,6 +80,7 @@ claudecodeui/
 
 - Documentation improvements are always welcome
 - Keep language clear and concise
+- Keep installation and self-hosting instructions aligned with [the self-hosting guide](docs/SELF-HOST.md)
 
 ## Commit Convention
 
@@ -114,7 +116,7 @@ fix: redirect unauthenticated users to login
 fix(editor): syntax highlighting for .env files
 perf: lazy load code editor component
 refactor(chat): extract message list component
-docs: update API configuration guide
+docs: update self-hosting guide
 ```
 
 ### Breaking Changes
@@ -136,20 +138,14 @@ feat!: redesign settings page layout
 
 ## Releases
 
-Releases are managed by maintainers using [release-it](https://github.com/release-it/release-it) with the [conventional changelog plugin](https://github.com/release-it/conventional-changelog).
+Maintainers publish approved repository revisions through the repository-owned self-hosting lifecycle. Use an immutable commit SHA for installations and updates; do not rely on a global package or a moving branch.
 
 ```bash
-npm run release           # interactive (prompts for version bump)
-npm run release -- patch  # patch release
-npm run release -- minor  # minor release
+./scripts/gajae-app.sh status
+./scripts/gajae-app.sh update --ref <approved-full-commit-sha>
 ```
 
-This automatically:
-- Bumps the version based on commit types (`feat` = minor, `fix` = patch)
-- Generates categorized release notes
-- Updates `CHANGELOG.md`
-- Creates a git tag and GitHub Release
-- Publishes to npm
+See the [self-hosting guide](docs/SELF-HOST.md) for installation, updates, rollback, and service operations.
 
 ## License
 

@@ -24,7 +24,7 @@ const initialState: LoginFormState = {
  */
 export default function LoginForm() {
   const { t } = useTranslation('auth');
-  const { login } = useAuth();
+  const { error: authError, login } = useAuth();
 
   const [formState, setFormState] = useState<LoginFormState>(initialState);
   const [errorMessage, setErrorMessage] = useState('');
@@ -59,7 +59,7 @@ export default function LoginForm() {
     <AuthScreenLayout
       title={t('login.title')}
       description={t('login.description')}
-      footerText="Enter your credentials to access CloudCLI"
+      footerText="가재코드에 접속하려면 로그인하세요"
     >
       <form onSubmit={handleSubmit} className="space-y-4">
         <AuthInputField
@@ -85,7 +85,7 @@ export default function LoginForm() {
           icon={Lock}
         />
 
-        <AuthErrorAlert errorMessage={errorMessage} />
+        <AuthErrorAlert errorMessage={errorMessage || authError || ''} />
 
         <button
           type="submit"

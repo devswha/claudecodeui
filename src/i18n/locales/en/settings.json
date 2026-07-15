@@ -143,6 +143,7 @@
       "title": "Event Types",
       "actionRequired": "Action required",
       "stop": "Run stopped",
+      "liveStop": "tmux live session reply ready",
       "error": "Run failed"
     }
   },
@@ -472,7 +473,7 @@
     },
     "managed": {
       "badge": "Managed",
-      "hint": "Managed by CloudCLI."
+      "hint": "Managed by 가재코드."
     },
     "help": {
       "title": "About Codex MCP",
@@ -504,7 +505,7 @@
     "docs": "Docs",
     "sections": {
       "officialTitle": "Official Plugins",
-      "officialDescription": "Maintained by the CloudCLI team and ready for direct install.",
+      "officialDescription": "Maintained by the 가재코드 team and ready for direct install.",
       "unofficialTitle": "Other Plugins",
       "unofficialDescription": "Unofficial plugins and integrations from other users. Review the source before installing."
     },
@@ -530,12 +531,6 @@
       "name": "Claude Watch",
       "badge": "unofficial",
       "description": "Watch long-running Claude Code sessions for hangs and expose process controls.",
-      "install": "Install"
-    },
-    "prismCloudCLI": {
-      "name": "PRISM CloudCLI",
-      "badge": "unofficial",
-      "description": "Session intelligence for Claude Code, inside CloudCLI. See why your sessions are burning tokens without leaving the browser.",
       "install": "Install"
     },
     "sessionManagerPlugin": {

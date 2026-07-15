@@ -32,6 +32,10 @@ const agentConfig: Record<AgentProvider, AgentConfig> = {
     name: 'OpenCode',
     color: 'zinc',
   },
+  gjc: {
+    name: 'Gajae Code',
+    color: 'gray',
+  },
 };
 
 const colorClasses = {

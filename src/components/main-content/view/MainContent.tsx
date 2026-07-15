@@ -1,10 +1,9 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { Menu, SquareTerminal, X } from 'lucide-react';
 
 import ChatInterface from '../../chat/view/ChatInterface';
-import FileTree from '../../file-tree/view/FileTree';
-import StandaloneShell from '../../standalone-shell/view/StandaloneShell';
-import GitPanel from '../../git-panel/view/GitPanel';
 import PluginTabContent from '../../plugins/view/PluginTabContent';
+import StandaloneShell from '../../standalone-shell/view/StandaloneShell';
 import { BrowserUsePanel } from '../../browser-use';
 import type { MainContentProps } from '../types/types';
 import { useTaskMaster } from '../../../contexts/TaskMasterContext';
@@ -20,6 +19,7 @@ import { TaskMasterPanel } from '../../task-master';
 
 import MainContentHeader from './subcomponents/MainContentHeader';
 import MainContentStateView from './subcomponents/MainContentStateView';
+import FilesPanel from './subcomponents/FilesPanel';
 import ErrorBoundary from './ErrorBoundary';
 
 type TaskMasterContextValue = {
@@ -36,6 +36,10 @@ type TasksSettingsContextValue = {
 function MainContent({
   selectedProject,
   selectedSession,
+  isSessionReadOnly,
+  liveSessionTmuxName,
+  liveSessionTmuxId,
+  liveSessionModel,
   activeTab,
   setActiveTab,
   ws,
@@ -52,6 +56,8 @@ function MainContent({
   onShowSettings,
   externalMessageUpdate,
   newSessionTrigger,
+  externalTerminal,
+  onExternalTerminalClose,
 }: MainContentProps) {
   const { preferences } = useUiPreferences();
   const { showRawParameters, showThinking, sendByCtrlEnter } = preferences;
@@ -59,6 +65,21 @@ function MainContent({
   const { currentProject, setCurrentProject } = useTaskMaster() as TaskMasterContextValue;
   const { tasksEnabled, isTaskMasterInstalled } = useTasksSettings() as TasksSettingsContextValue;
   const [browserUseEnabled, setBrowserUseEnabled] = useState(false);
+  const [filesPanelOpen, setFilesPanelOpen] = useState(() => {
+    try {
+      return localStorage.getItem('files-panel-open') === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('files-panel-open', String(filesPanelOpen));
+    } catch {
+      // storage errors are non-fatal
+    }
+  }, [filesPanelOpen]);
 
   const shouldShowTasksTab = Boolean(tasksEnabled && isTaskMasterInstalled);
   const shouldShowBrowserTab = browserUseEnabled;
@@ -99,6 +120,14 @@ function MainContent({
     }
   }, [shouldShowTasksTab, activeTab, setActiveTab]);
 
+  useEffect(() => {
+    // Shell/Git/Files tabs were removed; a persisted selection would render a
+    // blank main area, so bounce it back to chat (Files lives in FilesPanel).
+    if (activeTab === 'shell' || activeTab === 'git' || activeTab === 'files') {
+      setActiveTab('chat');
+    }
+  }, [activeTab, setActiveTab]);
+
   const loadBrowserUseSettings = useCallback(async () => {
     try {
       const response = await authenticatedFetch('/api/browser-use/settings');
@@ -136,6 +165,62 @@ function MainContent({
     return <MainContentStateView mode="loading" isMobile={isMobile} onMenuClick={onMenuClick} />;
   }
 
+  // External CLI (claude/codex) tmux terminal takes over the whole main area —
+  // same footprint as a gjc session. Rendered before the no-project empty state
+  // because the target carries its own project (PTY cwd only).
+  if (externalTerminal) {
+    const safeName = /^[A-Za-z0-9._-]{1,64}$/.test(externalTerminal.tmuxName) ? externalTerminal.tmuxName : null;
+    return (
+      <div className="flex h-full flex-col">
+        <div className="flex flex-shrink-0 items-center justify-between border-b border-border/50 px-3 py-2">
+          <div className="flex min-w-0 items-center gap-2">
+            {isMobile && (
+              <button
+                type="button"
+                onClick={onMenuClick}
+                className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+                aria-label="Open sidebar"
+              >
+                <Menu className="h-4 w-4" />
+              </button>
+            )}
+            <SquareTerminal className="h-4 w-4 shrink-0 text-emerald-500" aria-hidden />
+            <span className="truncate text-sm font-semibold text-foreground">tmux: {externalTerminal.tmuxName}</span>
+            <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">
+              {externalTerminal.kind} · 분리(detach): Ctrl+B → D
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={onExternalTerminalClose}
+            title="터미널 닫기"
+            className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-hidden">
+          {safeName && (
+            <StandaloneShell
+              // key: switching targets must remount the Shell — its websocket
+              // does NOT reconnect when only initialCommand changes, so without
+              // this the previous session's terminal keeps showing (stock→test).
+              key={safeName}
+              project={externalTerminal.project}
+              command={`tmux attach-session -t '=${safeName}'`}
+              isActive
+              // minimal: drop the Shell's own status bar ("New Session" +
+              // Disconnect/Restart) — our header above already names the
+              // target and closes the view; minimal also auto-connects.
+              minimal
+              onComplete={() => onExternalTerminalClose()}
+            />
+          )}
+        </div>
+      </div>
+    );
+  }
+
   if (!selectedProject) {
     return <MainContentStateView mode="empty" isMobile={isMobile} onMenuClick={onMenuClick} />;
   }
@@ -151,6 +236,8 @@ function MainContent({
         shouldShowBrowserTab={shouldShowBrowserTab}
         isMobile={isMobile}
         onMenuClick={onMenuClick}
+        filesPanelOpen={filesPanelOpen}
+        onToggleFilesPanel={() => setFilesPanelOpen((previous) => !previous)}
       />
 
       <div className="flex min-h-0 flex-1 overflow-hidden">
@@ -160,6 +247,10 @@ function MainContent({
               <ChatInterface
                 selectedProject={selectedProject}
                 selectedSession={selectedSession}
+                isSessionReadOnly={isSessionReadOnly}
+                liveSessionTmuxName={liveSessionTmuxName}
+                liveSessionTmuxId={liveSessionTmuxId}
+                liveSessionModel={liveSessionModel}
                 ws={ws}
                 sendMessage={sendMessage}
                 onFileOpen={handleFileOpen}
@@ -180,28 +271,6 @@ function MainContent({
             </ErrorBoundary>
           </div>
 
-          {activeTab === 'files' && (
-            <div className="h-full overflow-hidden">
-              <FileTree selectedProject={selectedProject} onFileOpen={handleFileOpen} />
-            </div>
-          )}
-
-          {activeTab === 'shell' && (
-            <div className="h-full w-full overflow-hidden">
-              <StandaloneShell
-                project={selectedProject}
-                session={selectedSession}
-                showHeader={false}
-                isActive={activeTab === 'shell'}
-              />
-            </div>
-          )}
-
-          {activeTab === 'git' && (
-            <div className="h-full overflow-hidden">
-              <GitPanel selectedProject={selectedProject} isMobile={isMobile} onFileOpen={handleFileOpen} />
-            </div>
-          )}
 
           {shouldShowTasksTab && <TaskMasterPanel isVisible={activeTab === 'tasks'} />}
 
@@ -222,6 +291,15 @@ function MainContent({
           )}
         </div>
 
+        {filesPanelOpen && (
+          <div className="w-80 max-w-[85vw] flex-shrink-0 border-l border-border/60 bg-background md:w-72">
+            <FilesPanel
+              onFileOpen={(filePath, projectId) => handleFileOpen(filePath, null, { projectId })}
+              onClose={() => setFilesPanelOpen(false)}
+            />
+          </div>
+        )}
+
         <EditorSidebar
           editingFile={editingFile}
           isMobile={isMobile}
@@ -233,7 +311,7 @@ function MainContent({
           onCloseEditor={handleCloseEditor}
           onToggleEditorExpand={handleToggleEditorExpand}
           projectPath={selectedProject.path}
-          fillSpace={activeTab === 'files'}
+          fillSpace={false}
         />
       </div>
     </div>

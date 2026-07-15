@@ -14,7 +14,6 @@ import {
   sessionsDb,
   userDb,
 } from '../../modules/database/index.js';
-
 import { notifyRunStopped } from '../notification-orchestrator.js';
 
 async function withIsolatedDatabase(runTest) {
@@ -59,7 +58,7 @@ test('push payload uses the app session id when notified with a provider session
       });
       pushSubscriptionsDb.saveSubscription(userId, 'https://example.test/push', 'p256dh', 'auth');
       sessionsDb.createAppSession('app-session-1', 'claude', '/workspace/demo');
-      sessionsDb.assignProviderSessionId('app-session-1', 'claude-native-1');
+      sessionsDb.assignProviderSessionId('app-session-1', 'claude', 'claude-native-1');
 
       notifyRunStopped({
         userId,

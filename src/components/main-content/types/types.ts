@@ -1,6 +1,6 @@
 import type { Dispatch, SetStateAction } from 'react';
 
-import type { AppTab, Project, ProjectSession } from '../../../types/app';
+import type { AppTab, ExternalTerminalTarget, Project, ProjectSession } from '../../../types/app';
 import type {
   MarkSessionIdle,
   MarkSessionProcessing,
@@ -41,6 +41,10 @@ export type PrdFile = {
 export type MainContentProps = {
   selectedProject: Project | null;
   selectedSession: ProjectSession | null;
+  isSessionReadOnly: boolean;
+  liveSessionTmuxName: string | null;
+  liveSessionTmuxId: string | null;
+  liveSessionModel: string | null;
   activeTab: AppTab;
   setActiveTab: Dispatch<SetStateAction<AppTab>>;
   ws: WebSocket | null;
@@ -57,6 +61,9 @@ export type MainContentProps = {
   onShowSettings: (tab?: SettingsMainTab) => void;
   externalMessageUpdate: number;
   newSessionTrigger: number;
+  // External CLI (claude/codex) tmux terminal shown as the full main area.
+  externalTerminal: ExternalTerminalTarget | null;
+  onExternalTerminalClose: () => void;
 };
 
 export type MainContentHeaderProps = {
@@ -68,6 +75,8 @@ export type MainContentHeaderProps = {
   shouldShowBrowserTab: boolean;
   isMobile: boolean;
   onMenuClick: () => void;
+  filesPanelOpen: boolean;
+  onToggleFilesPanel: () => void;
 };
 
 export type MainContentStateViewProps = {

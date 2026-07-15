@@ -6,15 +6,13 @@ import path from 'path';
 import os from 'os';
 import http from 'http';
 
-// cross-spawn is a drop-in for child_process.spawn that resolves .cmd
-// shims/PATHEXT on Windows and delegates to the native spawn elsewhere.
-import spawn from 'cross-spawn';
 import express from 'express';
 import cors from 'cors';
 import mime from 'mime-types';
 import Database from 'better-sqlite3';
 
 import { AppError, WORKSPACES_ROOT, getOpenCodeDatabasePath, validateWorkspacePath } from '@/shared/utils.js';
+import { resolveProjectFileForRead, resolveProjectFileForWrite } from '@/shared/project-file-containment.js';
 import { closeSessionsWatcher, initializeSessionsWatcher } from '@/modules/providers/index.js';
 import { createWebSocketServer } from '@/modules/websocket/index.js';
 
@@ -40,6 +38,10 @@ import {
     abortOpenCodeSession,
 } from './opencode-cli.js';
 import {
+    spawnGjc,
+    abortGjcSession,
+} from './gjc-cli.js';
+import {
     stripAnsiSequences,
     normalizeDetectedUrl,
     extractUrlsFromText,
@@ -64,23 +66,18 @@ import { assetsRoutes } from './modules/assets/index.js';
 import browserUseMcpRoutes from './modules/browser-use/browser-use-mcp.routes.js';
 import { browserUseService } from './modules/browser-use/browser-use.service.js';
 import { startEnabledPluginServers, stopAllPlugins, getPluginPort } from './utils/plugin-process-manager.js';
-import { initializeDatabase, projectsDb, sessionsDb } from './modules/database/index.js';
+import { initializeDatabase, projectsDb, sessionsDb, userDb } from './modules/database/index.js';
+import { startLiveTurnMonitor } from './modules/notifications/index.js';
 import { configureWebPush } from './services/vapid-keys.js';
 import { validateApiKey, authenticateToken, authenticateWebSocket } from './middleware/auth.js';
-import { IS_PLATFORM } from './constants/config.js';
 import { c } from './utils/colors.js';
+import { evaluateExposure } from './utils/exposure-guard.js';
 
 const __dirname = getModuleDir(import.meta.url);
 // The server source runs from /server, while the compiled output runs from /dist-server/server.
 // Resolving the app root once keeps every repo-level lookup below aligned across both layouts.
 const APP_ROOT = findAppRoot(__dirname);
-const installMode = fs.existsSync(path.join(APP_ROOT, '.git')) ? 'git' : 'npm';
-// Version of the code that is actually running, captured once at process
-// startup. This intentionally does NOT re-read package.json per request: after
-// an update replaces the files on disk, package.json reflects the NEW version
-// while this long-lived process still runs the OLD code. The frontend bundle is
-// rebuilt on update, so a mismatch between this value and the frontend's
-// build-time version means the server was updated but not restarted.
+// Version of the server process, captured once for the health endpoint.
 const RUNNING_VERSION = (() => {
     try {
         return JSON.parse(fs.readFileSync(path.join(APP_ROOT, 'package.json'), 'utf8')).version || null;
@@ -105,7 +102,6 @@ const server = http.createServer(app);
 // Single WebSocket server that handles chat, shell, and plugin proxy paths.
 const wss = createWebSocketServer(server, {
     verifyClient: {
-        isPlatform: IS_PLATFORM,
         authenticateWebSocket,
     },
     chat: {
@@ -114,12 +110,14 @@ const wss = createWebSocketServer(server, {
             cursor: spawnCursor,
             codex: queryCodex,
             opencode: spawnOpenCode,
+            gjc: spawnGjc,
         },
         abortFns: {
             claude: abortClaudeSDKSession,
             cursor: abortCursorSession,
             codex: abortCodexSession,
             opencode: abortOpenCodeSession,
+            gjc: abortGjcSession,
         },
         resolveToolApproval,
         getPendingApprovalsForSession,
@@ -163,7 +161,6 @@ app.get('/health', (req, res) => {
     res.json({
         status: 'ok',
         timestamp: new Date().toISOString(),
-        installMode,
         version: RUNNING_VERSION
     });
 });
@@ -177,7 +174,7 @@ app.use('/api/auth', authRoutes);
 // Projects API Routes (protected)
 app.use('/api/projects', authenticateToken, projectModuleRoutes);
 
-// Chat image asset upload/serving (global ~/.cloudcli/assets store, protected)
+// Chat image asset upload/serving (global ~/.gajae-app/assets store, protected)
 app.use('/api/assets', authenticateToken, assetsRoutes);
 
 // Git API Routes (protected)
@@ -243,79 +240,6 @@ app.use(express.static(path.join(APP_ROOT, 'dist'), {
 // /api/config endpoint removed - no longer needed
 // Frontend now uses window.location for WebSocket URLs
 
-// System update endpoint
-app.post('/api/system/update', authenticateToken, async (req, res) => {
-    try {
-        // Get the project root directory (parent of server directory)
-        const projectRoot = APP_ROOT;
-
-        console.log('Starting system update from directory:', projectRoot);
-
-        // Platform deployments use their own update workflow from the project root.
-        const updateCommand = IS_PLATFORM
-        // In platform, husky and dev dependencies are not needed
-            ? 'npm run update:platform'
-            : installMode === 'git'
-                ? 'git checkout main && git pull && npm install'
-                : 'npm install -g @cloudcli-ai/cloudcli@latest';
-
-        const updateCwd = IS_PLATFORM || installMode === 'git'
-            ? projectRoot
-            : os.homedir();
-
-        const child = spawn('sh', ['-c', updateCommand], {
-            cwd: updateCwd,
-            env: process.env
-        });
-
-        let output = '';
-        let errorOutput = '';
-
-        child.stdout.on('data', (data) => {
-            const text = data.toString();
-            output += text;
-            console.log('Update output:', text);
-        });
-
-        child.stderr.on('data', (data) => {
-            const text = data.toString();
-            errorOutput += text;
-            console.error('Update error:', text);
-        });
-
-        child.on('close', (code) => {
-            if (code === 0) {
-                res.json({
-                    success: true,
-                    output: output || 'Update completed successfully',
-                    message: 'Update completed. Please restart the server to apply changes.'
-                });
-            } else {
-                res.status(500).json({
-                    success: false,
-                    error: 'Update command failed',
-                    output: output,
-                    errorOutput: errorOutput
-                });
-            }
-        });
-
-        child.on('error', (error) => {
-            console.error('Update process error:', error);
-            res.status(500).json({
-                success: false,
-                error: error.message
-            });
-        });
-
-    } catch (error) {
-        console.error('System update error:', error);
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
 
 const expandWorkspacePath = (inputPath) => {
     if (!inputPath) return inputPath;
@@ -468,7 +392,7 @@ app.get('/api/projects/:projectId/file', authenticateToken, async (req, res) => 
             return res.status(404).json({ error: 'Project not found' });
         }
 
-        // Handle both absolute and relative paths
+        // Handle both absolute and relative paths.
         const resolved = path.isAbsolute(filePath)
             ? path.resolve(filePath)
             : path.resolve(projectRoot, filePath);
@@ -477,8 +401,13 @@ app.get('/api/projects/:projectId/file', authenticateToken, async (req, res) => 
             return res.status(403).json({ error: 'Path must be under project root' });
         }
 
-        const content = await fsPromises.readFile(resolved, 'utf8');
-        res.json({ content, path: resolved });
+        const readablePath = await resolveProjectFileForRead(projectRoot, resolved);
+        if (!readablePath) {
+            return res.status(403).json({ error: 'Path must be under project root' });
+        }
+
+        const content = await fsPromises.readFile(readablePath, 'utf8');
+        res.json({ content, path: readablePath });
     } catch (error) {
         console.error('Error reading file:', error);
         if (error.code === 'ENOENT') {
@@ -519,19 +448,24 @@ app.get('/api/projects/:projectId/files/content', authenticateToken, async (req,
             return res.status(403).json({ error: 'Path must be under project root' });
         }
 
+        const readablePath = await resolveProjectFileForRead(projectRoot, resolved);
+        if (!readablePath) {
+            return res.status(403).json({ error: 'Path must be under project root' });
+        }
+
         // Check if file exists
         try {
-            await fsPromises.access(resolved);
+            await fsPromises.access(readablePath);
         } catch (error) {
             return res.status(404).json({ error: 'File not found' });
         }
 
         // Get file extension and set appropriate content type
-        const mimeType = mime.lookup(resolved) || 'application/octet-stream';
+        const mimeType = mime.lookup(readablePath) || 'application/octet-stream';
         res.setHeader('Content-Type', mimeType);
 
         // Stream the file
-        const fileStream = fs.createReadStream(resolved);
+        const fileStream = fs.createReadStream(readablePath);
         fileStream.pipe(res);
 
         fileStream.on('error', (error) => {
@@ -571,7 +505,7 @@ app.put('/api/projects/:projectId/file', authenticateToken, async (req, res) => 
             return res.status(404).json({ error: 'Project not found' });
         }
 
-        // Handle both absolute and relative paths
+        // Handle both absolute and relative paths.
         const resolved = path.isAbsolute(filePath)
             ? path.resolve(filePath)
             : path.resolve(projectRoot, filePath);
@@ -580,12 +514,17 @@ app.put('/api/projects/:projectId/file', authenticateToken, async (req, res) => 
             return res.status(403).json({ error: 'Path must be under project root' });
         }
 
+        const writablePath = await resolveProjectFileForWrite(projectRoot, resolved);
+        if (!writablePath) {
+            return res.status(403).json({ error: 'Path must be under project root' });
+        }
+
         // Write the new content
-        await fsPromises.writeFile(resolved, content, 'utf8');
+        await fsPromises.writeFile(writablePath, content, 'utf8');
 
         res.json({
             success: true,
-            path: resolved,
+            path: writablePath,
             message: 'File saved successfully'
         });
     } catch (error) {
@@ -1065,7 +1004,7 @@ const uploadFilesHandler = async (req, res) => {
 app.post('/api/projects/:projectId/files/upload', authenticateToken, uploadFilesHandler);
 
 // Chat image uploads moved to POST /api/assets/images (server/modules/assets),
-// which stores them in the global ~/.cloudcli/assets folder.
+// which stores them in the global ~/.gajae-app/assets folder.
 
 // Get token usage for a specific session. `projectId` is the DB primary key;
 // the Claude branch below resolves it to an absolute path via the DB.
@@ -1534,10 +1473,12 @@ async function getFileTree(dirPath, maxDepth = 3, currentDepth = 0, showHidden =
 }
 
 const SERVER_PORT = process.env.SERVER_PORT || 3001;
-const HOST = process.env.HOST || '0.0.0.0';
+// Loopback by default (fail-closed): this UI can run shell commands, so network
+// exposure must be an explicit choice (HOST env / --host) — see utils/exposure-guard.js.
+const HOST = process.env.HOST || '127.0.0.1';
 const DISPLAY_HOST = getConnectableHost(HOST);
 const VITE_PORT = process.env.VITE_PORT || 5173;
-const LOCAL_SERVER_MARKER_PATH = path.join(os.homedir(), '.cloudcli', 'local-server.json');
+const LOCAL_SERVER_MARKER_PATH = path.join(os.homedir(), '.gajae-app', 'local-server.json');
 
 async function writeLocalServerMarker() {
     const marker = {
@@ -1545,7 +1486,6 @@ async function writeLocalServerMarker() {
         host: HOST,
         port: Number.parseInt(String(SERVER_PORT), 10),
         url: `http://${DISPLAY_HOST}:${SERVER_PORT}`,
-        installMode,
         appRoot: APP_ROOT,
         updatedAt: new Date().toISOString(),
     };
@@ -1559,8 +1499,8 @@ async function removeLocalServerMarker() {
         const raw = await fsPromises.readFile(LOCAL_SERVER_MARKER_PATH, 'utf8');
         const marker = JSON.parse(raw);
         if (marker.pid && marker.pid !== process.pid) return;
-    } catch (error) {
-        if (error.code === 'ENOENT') return;
+    } catch {
+        return;
     }
 
     try {
@@ -1577,6 +1517,21 @@ async function startServer() {
     try {
         // Initialize authentication database
         await initializeDatabase();
+
+        // Fail-closed exposure guard: refuse non-loopback listen while no
+        // account exists (first /register would be claimable network-wide).
+        const exposure = evaluateExposure({
+            host: HOST,
+            hasUsers: userDb.hasUsers(),
+            allowRemoteSetup: process.env.ALLOW_REMOTE_SETUP === '1',
+        });
+        if (exposure.level === 'block') {
+            console.error(`${c.warn('[SECURITY]')} ${exposure.message}`);
+            process.exit(1);
+        }
+        if (exposure.level === 'warn') {
+            console.warn(`${c.warn('[SECURITY]')} ${exposure.message}`);
+        }
 
         // Configure Web Push (VAPID keys)
         configureWebPush();
@@ -1596,23 +1551,28 @@ async function startServer() {
         console.log(`${c.info('[INFO]')} To run in development mode with hot-module replacement, go to http://${DISPLAY_HOST}:${VITE_PORT}`);
    
         server.listen(SERVER_PORT, HOST, async () => {
-            const appInstallPath = APP_ROOT;
+            const appRoot = APP_ROOT;
             await writeLocalServerMarker().catch((error) => {
                 console.warn('[WARN] Could not write local server marker:', error.message);
             });
 
             console.log('');
             console.log(c.dim('═'.repeat(63)));
-            console.log(`  ${c.bright('CloudCLI Server - Ready')}`);
+            console.log(`  ${c.bright('Gajae App Server - Ready')}`);
             console.log(c.dim('═'.repeat(63)));
             console.log('');
             console.log(`${c.info('[INFO]')} Server URL:  ${c.bright('http://' + DISPLAY_HOST + ':' + SERVER_PORT)}`);
-            console.log(`${c.info('[INFO]')} Installed at: ${c.dim(appInstallPath)}`);
-            console.log(`${c.tip('[TIP]')}  Run "cloudcli status" for full configuration details`);
+            console.log(`${c.info('[INFO]')} App root: ${c.dim(appRoot)}`);
+            console.log(`${c.tip('[TIP]')}  Run "gajae-app status" for full configuration details`);
             console.log('');
 
             // Start watching the projects folder for changes
             await initializeSessionsWatcher();
+
+            // Notify on tmux-driven gjc turn completions (transcript delta →
+            // assistant stopReason). Server-side so web push works with every
+            // tab closed. Kill switch: GAJAE_APP_LIVE_NOTIFY=0.
+            startLiveTurnMonitor();
 
             // Start server-side plugin processes for enabled plugins
             startEnabledPluginServers().catch(err => {

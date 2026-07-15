@@ -43,7 +43,7 @@ export class CodexSessionSynchronizer implements IProviderSessionSynchronizer {
         continue;
       }
 
-      const existingSession = sessionsDb.getSessionByProviderSessionId(parsed.sessionId)
+      const existingSession = sessionsDb.getSessionByProviderSessionId(this.provider, parsed.sessionId)
         ?? sessionsDb.getSessionById(parsed.sessionId);
       if (existingSession) {
         // If session name is untitled and we now have a name, update it
@@ -123,7 +123,7 @@ export class CodexSessionSynchronizer implements IProviderSessionSynchronizer {
 
     // App-created sessions are keyed by an app id, so disk-discovered provider
     // ids must be resolved through the provider-id mapping first.
-    const existingSession = sessionsDb.getSessionByProviderSessionId(parsed.sessionId)
+    const existingSession = sessionsDb.getSessionByProviderSessionId(this.provider, parsed.sessionId)
       ?? sessionsDb.getSessionById(parsed.sessionId);
     const existingSessionName = existingSession?.custom_name;
     if (existingSessionName && existingSessionName !== 'Untitled Codex Session') {
@@ -133,7 +133,7 @@ export class CodexSessionSynchronizer implements IProviderSessionSynchronizer {
       };
     }
 
-    // Sessions started by sending a message from cloudcli carry a distinct
+    // Sessions started by sending a message from Gajae App carry a distinct
     // app-allocated session_id mapped to the provider id. For these we title the
     // conversation from the first user message the user typed, instead of the
     // generic "Untitled Codex Session" placeholder. Sessions discovered purely
@@ -162,7 +162,7 @@ export class CodexSessionSynchronizer implements IProviderSessionSynchronizer {
 
   /**
    * Returns the first user message text in a Codex transcript, used to title
-   * app-created sessions from the prompt the user sent from cloudcli.
+   * app-created sessions from the prompt the user sent from Gajae App.
    *
    * Reads the `event_msg`/`user_message` payload rather than the raw
    * `response_item` user turn so injected `<environment_context>` boilerplate is

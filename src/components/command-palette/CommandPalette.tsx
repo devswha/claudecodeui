@@ -55,11 +55,11 @@ type CommandPaletteProps = {
   onShowTab?: (tab: AppTab) => void;
 };
 
+// 'files'/'shell'/'git' tabs no longer exist (Files is a side panel; the git
+// panel and app-pty shell were removed) — git actions below run without a
+// destination tab.
 const NAV_TABS: Array<{ id: AppTab; label: string; keywords: string }> = [
   { id: 'chat', label: 'Go to Chat', keywords: 'chat messages conversation' },
-  { id: 'files', label: 'Go to Files', keywords: 'files file tree explorer' },
-  { id: 'shell', label: 'Go to Shell', keywords: 'shell terminal console' },
-  { id: 'git', label: 'Go to Git', keywords: 'git diff branches' },
   { id: 'tasks', label: 'Go to Tasks', keywords: 'tasks taskmaster' },
 ];
 
@@ -237,21 +237,21 @@ export default function CommandPalette({
               <CommandGroup heading="Git">
                 <CommandItem
                   value="Git Fetch remote"
-                  onSelect={() => run(() => { void git.fetch(); onShowTab?.('git'); })}
+                  onSelect={() => run(() => { void git.fetch(); })}
                 >
                   <RefreshCw className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
                   <span className="flex-1">Git: Fetch</span>
                 </CommandItem>
                 <CommandItem
                   value="Git Pull merge upstream"
-                  onSelect={() => run(() => { void git.pull(); onShowTab?.('git'); })}
+                  onSelect={() => run(() => { void git.pull(); })}
                 >
                   <ArrowDownToLine className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
                   <span className="flex-1">Git: Pull</span>
                 </CommandItem>
                 <CommandItem
                   value="Git Push origin remote"
-                  onSelect={() => run(() => { void git.push(); onShowTab?.('git'); })}
+                  onSelect={() => run(() => { void git.push(); })}
                 >
                   <ArrowUpFromLine className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
                   <span className="flex-1">Git: Push</span>
@@ -325,7 +325,7 @@ export default function CommandPalette({
                   <CommandItem
                     key={c.hash}
                     value={`${c.message} ${c.author} ${c.shortHash}`}
-                    onSelect={() => run(() => onShowTab?.('git'))}
+                    onSelect={() => run(() => {})}
                   >
                     <GitCommit className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
                     <span className="font-mono text-xs text-muted-foreground">{c.shortHash}</span>
@@ -345,7 +345,7 @@ export default function CommandPalette({
                   <CommandItem
                     key={`branch-${b.name}`}
                     value={b.name}
-                    onSelect={() => run(() => { void git.checkout(b.name); onShowTab?.('git'); })}
+                    onSelect={() => run(() => { void git.checkout(b.name); })}
                   >
                     <GitMerge className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
                     <span className="flex-1 truncate">Switch to: {b.name}</span>

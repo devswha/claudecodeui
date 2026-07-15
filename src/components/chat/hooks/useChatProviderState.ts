@@ -21,9 +21,10 @@ const FALLBACK_DEFAULT_MODEL: Record<LLMProvider, string> = {
   cursor: 'gpt-5.3-codex',
   codex: 'gpt-5.4',
   opencode: 'anthropic/claude-sonnet-4-5',
+  gjc: 'default',
 };
 
-const PROVIDERS: LLMProvider[] = ['claude', 'cursor', 'codex', 'opencode'];
+const PROVIDERS: LLMProvider[] = ['claude', 'cursor', 'codex', 'opencode', 'gjc'];
 
 const readStoredProvider = (): LLMProvider => {
   const storedProvider = localStorage.getItem('selected-provider');
@@ -43,6 +44,7 @@ const FALLBACK_PERMISSION_MODES: Record<LLMProvider, PermissionMode[]> = {
   cursor: ['default', 'acceptEdits', 'bypassPermissions', 'plan'],
   codex: ['default', 'acceptEdits', 'bypassPermissions'],
   opencode: ['default', 'acceptEdits', 'bypassPermissions', 'plan'],
+  gjc: ['default'],
 };
 
 type ProviderCapabilities = {
@@ -355,6 +357,7 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
     cursor: cursorModel,
     codex: codexModel,
     opencode: opencodeModel,
+    gjc: 'default',
   }), [claudeModel, cursorModel, codexModel, opencodeModel]);
 
   useEffect(() => {

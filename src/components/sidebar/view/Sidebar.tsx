@@ -27,6 +27,11 @@ function Sidebar({
   selectedSession,
   activeSessions,
   attentionSessionIds,
+  liveSessionIds,
+  liveSessionNames,
+  liveSessionLineage,
+  liveSessionTmuxIds,
+  liveSessionKinds,
   onProjectSelect,
   onSessionSelect,
   onNewSession,
@@ -41,12 +46,13 @@ function Sidebar({
   settingsInitialTab,
   onCloseSettings,
   isMobile,
+  onExternalTerminalOpen,
 }: SidebarProps) {
   const { t } = useTranslation(['sidebar', 'common']);
   const { isPWA } = useDeviceSettings({ trackMobile: false });
   const { updateAvailable, restartRequired, latestVersion, currentVersion, releaseInfo, installMode } = useVersionCheck(
-    'siteboon',
-    'claudecodeui',
+    'devswha',
+    'gajae-app',
   );
   const { preferences, setPreference } = useUiPreferences();
   const { sidebarVisible } = preferences;
@@ -165,6 +171,7 @@ function Sidebar({
     loadingMoreProjects,
     activeSessions,
     attentionSessionIds,
+    liveSessionIds,
     forceExpanded: searchMode === 'running',
     isProjectStarred,
     onEditingNameChange: setEditingName,
@@ -306,6 +313,11 @@ function Sidebar({
             onShowVersionModal={() => setShowVersionModal(true)}
             onShowSettings={onShowSettings}
             projectListProps={projectListProps}
+            liveSessionNames={liveSessionNames}
+            liveSessionLineage={liveSessionLineage}
+            liveSessionTmuxIds={liveSessionTmuxIds}
+            liveSessionKinds={liveSessionKinds}
+            onExternalTerminalOpen={onExternalTerminalOpen}
             t={t}
           />
         </>

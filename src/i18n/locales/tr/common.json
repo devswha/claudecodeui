@@ -86,7 +86,7 @@
     "openInEditor": "Editörde Aç"
   },
   "mainContent": {
-    "loading": "CloudCLI Yükleniyor",
+    "loading": "가재코드 Yükleniyor",
     "settingUpWorkspace": "Çalışma alanın hazırlanıyor...",
     "chooseProject": "Projeni Seç",
     "selectProjectDescription": "Claude ile kodlamaya başlamak için kenar çubuğundan bir proje seç. Her proje kendi sohbet oturumlarını ve dosya geçmişini içerir.",
@@ -245,9 +245,9 @@
     "whatsNew": "Yenilikler:",
     "viewFullRelease": "Tam sürüm notlarını gör",
     "updateProgress": "Güncelleme İlerlemesi:",
-    "manualUpgrade": "Manuel yükseltme:",
-    "npmUpgradeCommand": "npm install -g @cloudcli-ai/cloudcli@latest",
-    "manualUpgradeHint": "Veya güncellemeyi otomatik çalıştırmak için \"Şimdi Güncelle\"ye tıkla.",
+    "manualUpgrade": "GitHub Releases'den indirin veya komut satırından güncelleyin:",
+    "npmUpgradeCommand": "scripts/gajae-app.sh update",
+    "manualUpgradeHint": "Güncellemeyi otomatik başlatmak için \"Şimdi Güncelle\"ye tıklayın.",
     "updateCompleted": "Güncelleme başarıyla tamamlandı!",
     "restartServer": "Değişikliklerin uygulanması için sunucuyu yeniden başlat.",
     "updateFailed": "Güncelleme başarısız",

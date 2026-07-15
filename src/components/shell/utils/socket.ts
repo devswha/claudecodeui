@@ -1,12 +1,7 @@
-import { IS_PLATFORM } from '../../../constants/config';
 import type { ShellIncomingMessage, ShellOutgoingMessage } from '../types/types';
 
 export function getShellWebSocketUrl(): string | null {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-
-  if (IS_PLATFORM) {
-    return `${protocol}//${window.location.host}/shell`;
-  }
 
   const token = localStorage.getItem('auth-token');
   if (!token) {

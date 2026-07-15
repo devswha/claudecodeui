@@ -47,6 +47,10 @@ export default function AgentsSettingsTab({
       authStatus: providerAuthStatus.opencode,
       onLogin: () => onProviderLogin('opencode'),
     },
+    gjc: {
+      authStatus: providerAuthStatus.gjc,
+      onLogin: () => onProviderLogin('gjc'),
+    },
   }), [
     onProviderLogin,
     providerAuthStatus.claude,

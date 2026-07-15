@@ -12,7 +12,7 @@ export type PermissionMode = 'default' | 'acceptEdits' | 'auto' | 'bypassPermiss
 export interface ChatImage {
   /** Inline data URL (Claude history stores attachments as base64). */
   data?: string;
-  /** Project-relative path under `.cloudcli/assets` served via the files API. */
+  /** Project-relative path under `.gajae-app/assets` served via the files API. */
   path?: string;
   name?: string;
   mimeType?: string;
@@ -120,6 +120,11 @@ export type SessionEstablishedContext = {
 export interface ChatInterfaceProps {
   selectedProject: Project | null;
   selectedSession: ProjectSession | null;
+  isSessionReadOnly: boolean;
+  liveSessionTmuxName: string | null;
+  // `$N` generation token of the tmux session backing the relay target (kill/send race guard).
+  liveSessionTmuxId: string | null;
+  liveSessionModel: string | null;
   ws: WebSocket | null;
   sendMessage: (message: unknown) => void;
   onFileOpen?: (filePath: string, diffInfo?: any) => void;

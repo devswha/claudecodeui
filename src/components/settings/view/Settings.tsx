@@ -19,7 +19,7 @@ import { useSettingsController } from '../hooks/useSettingsController';
 import { useWebPush } from '../../../hooks/useWebPush';
 import type { SettingsProps } from '../types/types';
 
-type DesktopNotificationsState = {
+type GajaeAppDesktopNotificationsState = {
   enabled: boolean;
   supported: boolean;
   connectedCount?: number;
@@ -27,14 +27,32 @@ type DesktopNotificationsState = {
   lastError?: string | null;
 };
 
+type GajaeAppDesktopNotificationsSnapshot = {
+  desktopNotifications?: GajaeAppDesktopNotificationsState;
+};
+
+type GajaeAppDesktopNotificationsBridge = {
+  getState: () => Promise<GajaeAppDesktopNotificationsSnapshot | null | undefined>;
+  onStateUpdated?: (
+    handler: (state: GajaeAppDesktopNotificationsSnapshot | null | undefined) => void,
+  ) => (() => void) | undefined;
+  update: (
+    notificationSettings: Pick<GajaeAppDesktopNotificationsState, 'enabled'>,
+  ) => Promise<GajaeAppDesktopNotificationsSnapshot | null | undefined>;
+};
+
+type GajaeAppWindow = Window & {
+  gajaeAppDesktopNotifications?: GajaeAppDesktopNotificationsBridge;
+};
+
 function Settings({ isOpen, onClose, projects = [], initialTab = 'agents' }: SettingsProps) {
   const { t } = useTranslation('settings');
-  const desktopNotificationsBridge = useMemo(() => (
+  const gajaeAppDesktopNotificationsBridge = useMemo<GajaeAppDesktopNotificationsBridge | null>(() => (
     typeof window === 'undefined'
       ? null
-      : ((window as any).cloudcliDesktopNotifications || null)
+      : (window as GajaeAppWindow).gajaeAppDesktopNotifications ?? null
   ), []);
-  const [desktopNotificationsState, setDesktopNotificationsState] = useState<DesktopNotificationsState | null>(null);
+  const [gajaeAppDesktopNotificationsState, setGajaeAppDesktopNotificationsState] = useState<GajaeAppDesktopNotificationsState | null>(null);
   const {
     activeTab,
     setActiveTab,
@@ -89,28 +107,28 @@ function Settings({ isOpen, onClose, projects = [], initialTab = 'agents' }: Set
   };
 
   useEffect(() => {
-    if (!desktopNotificationsBridge) return undefined;
+    if (!gajaeAppDesktopNotificationsBridge) return undefined;
     let mounted = true;
-    desktopNotificationsBridge.getState().then((state: any) => {
+    gajaeAppDesktopNotificationsBridge.getState().then((state) => {
       if (mounted) {
-        setDesktopNotificationsState(state?.desktopNotifications || null);
+        setGajaeAppDesktopNotificationsState(state?.desktopNotifications ?? null);
       }
     }).catch(() => {});
-    const unsubscribe = desktopNotificationsBridge.onStateUpdated?.((state: any) => {
+    const unsubscribe = gajaeAppDesktopNotificationsBridge.onStateUpdated?.((state) => {
       if (mounted) {
-        setDesktopNotificationsState(state?.desktopNotifications || null);
+        setGajaeAppDesktopNotificationsState(state?.desktopNotifications ?? null);
       }
     });
     return () => {
       mounted = false;
       unsubscribe?.();
     };
-  }, [desktopNotificationsBridge]);
+  }, [gajaeAppDesktopNotificationsBridge]);
 
   const handleEnableDesktopNotifications = async () => {
-    if (!desktopNotificationsBridge) return;
-    const state = await desktopNotificationsBridge.update({ enabled: true });
-    setDesktopNotificationsState(state?.desktopNotifications || null);
+    if (!gajaeAppDesktopNotificationsBridge) return;
+    const state = await gajaeAppDesktopNotificationsBridge.update({ enabled: true });
+    setGajaeAppDesktopNotificationsState(state?.desktopNotifications ?? null);
     setNotificationPreferences({
       ...notificationPreferences,
       channels: { ...notificationPreferences.channels, desktop: true },
@@ -118,9 +136,9 @@ function Settings({ isOpen, onClose, projects = [], initialTab = 'agents' }: Set
   };
 
   const handleDisableDesktopNotifications = async () => {
-    if (!desktopNotificationsBridge) return;
-    const state = await desktopNotificationsBridge.update({ enabled: false });
-    setDesktopNotificationsState(state?.desktopNotifications || null);
+    if (!gajaeAppDesktopNotificationsBridge) return;
+    const state = await gajaeAppDesktopNotificationsBridge.update({ enabled: false });
+    setGajaeAppDesktopNotificationsState(state?.desktopNotifications ?? null);
     setNotificationPreferences({
       ...notificationPreferences,
       channels: { ...notificationPreferences.channels, desktop: false },
@@ -202,8 +220,8 @@ function Settings({ isOpen, onClose, projects = [], initialTab = 'agents' }: Set
                   isPushLoading={isPushLoading}
                   onEnablePush={handleEnablePush}
                   onDisablePush={handleDisablePush}
-                  isDesktop={Boolean(desktopNotificationsBridge)}
-                  desktopNotifications={desktopNotificationsState}
+                  isDesktop={Boolean(gajaeAppDesktopNotificationsBridge)}
+                  desktopNotifications={gajaeAppDesktopNotificationsState}
                   onEnableDesktopNotifications={handleEnableDesktopNotifications}
                   onDisableDesktopNotifications={handleDisableDesktopNotifications}
                 />
